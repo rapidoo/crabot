@@ -1,8 +1,8 @@
 # Pattern Agentique : Plan → Execute → Critique
 **Compensation d'un modèle local faible par un scaffold fort**
 
-*Le Bris Consulting — Avril 2025 — v1.0 Draft*
-*Contexte : Gemma 4 26B MoE · MacBook M4 Pro 48GB · Ollama*
+*Le Bris Consulting — Avril 2025 — v1.1*
+*Contexte : Gemma 4 (E4B / 26B MoE / 31B Dense) · MacBook M4 Pro 48GB · Ollama*
 
 ---
 
@@ -21,10 +21,28 @@ demander au modèle de tout résoudre en un seul appel.
 
 ### Hypothèses de départ
 
-- Modèle backbone : Gemma 4 26B MoE (actifs ≃ 4B) via Ollama
-- Hardware : Apple Silicon M4 Pro, 48 GB unifié, MLX ou llama.cpp comme runtime
-- Pas de dépendance obligatoire à un orchestrateur spécifique
-- Contexte disponible : 256K tokens — exploité pour la mémoire et les traces d'exécution
+- **Zéro dépendance cloud** : agent 100% local, pas de SDK tiers, appels directs Ollama API
+- Hardware : Apple Silicon M4 Pro, 48 GB unifié, Ollama (llama.cpp backend)
+- Multi-modèle : mixer les variantes Gemma 4 selon le besoin (voir ci-dessous)
+- Contexte disponible : 128K–256K tokens selon variante
+
+### Famille Gemma 4 — variantes disponibles
+
+| Variante | Params totaux | Actifs | Contexte | Modalités | RAM (Q4) | Rôle dans l'agent |
+|----------|--------------|--------|----------|-----------|----------|-------------------|
+| **E2B** | 5.1B (2.3B eff) | 2.3B | 128K | Text, Image, Audio | 7.2 GB | Triage ultra-rapide |
+| **E4B** | 8B (4.5B eff) | 4.5B | 128K | Text, Image, Audio | 9.6 GB | Draft, classification |
+| **26B MoE** | 25.2B | 3.8B | 256K | Text, Image | 18 GB | Backbone (Plan + Execute) |
+| **31B Dense** | 30.7B | 30.7B | 256K | Text, Image | 20 GB | Critic fort |
+
+Architecture MoE 26B : 128 experts totaux, 8 actifs + 1 shared par token.
+Licence Apache 2.0. Function calling natif (entraîné, pas instruction-tuned).
+Thinking mode natif via token `<|think|>`. System prompt natif (rôle `system`).
+
+**Contrainte RAM** : 26B (18GB) + E4B (9.6GB) = 27.6 GB en simultané. Le 31B Dense
+(20GB) nécessite de décharger le 26B. Ollama gère le swap modèle automatiquement mais
+avec une pénalité de ~5s au chargement. Stratégie : garder 26B résident, charger 31B
+uniquement pour les passes Critic à fort enjeu.
 
 ---
 
@@ -172,24 +190,182 @@ squelette d'abord, puis le remplissage section par section.
 
 **Avantage principal :** les sections indépendantes peuvent être parallélisées via `asyncio.gather`.
 
-### 3.4 Speculative Draft + Verifier
+### 3.4 Routeur multi-modèle
 
-Exploite les deux tailles disponibles dans 48 GB RAM : le petit modèle génère vite, le grand
-vérifie et corrige si nécessaire.
+Plutôt qu'un seul backbone, l'agent route chaque appel vers la variante optimale.
+Le routeur est un triage E4B ultra-rapide en amont du pipeline.
 
 ```
-Gemma 4 E4B (actifs ~800M)  ──►  draft rapide (~2s)  ──►  Gemma 4 26B MoE
-                                                            vérification (~8s)
-                                                            correction si besoin
-
-Gain : ~60% de réduction de latence sur les steps simples
-Usage : boucles Executor où la vitesse prime sur la qualité initiale
+                          USER INPUT
+                              │
+                    ┌─────────┴─────────┐
+                    │  TRIAGE (E4B)     │  thinking off, < 1s
+                    │  classify(input)  │
+                    └────┬────┬────┬────┘
+                         │    │    │
+                simple   │    │    │  critique
+                ◄────────┘    │    └────────►
+                              │
+                         complexe
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        │                     │                     │
+   E4B direct          26B MoE (Plan+Exec)     31B Dense (Critic)
+   thinking off        thinking on              thinking on
+   réponse courte      raisonnement struct.     évaluation rigoureuse
 ```
 
-**Heuristique d'activation :** utiliser E4B en draft si `step.tool == "none"` et
-`len(step.input) < 200 tokens`. Sinon, appel direct 26B.
+**Heuristiques de routage :**
 
-### 3.5 Memory-Augmented Context (Neo4j)
+| Condition | Modèle | Thinking |
+|-----------|--------|----------|
+| Input < 100 tokens, pas d'image, tâche simple | E4B | off |
+| Tâche structurable (code, extraction, plan) | 26B MoE | on |
+| Évaluation critique, décision importante | 31B Dense | on |
+| Image / document OCR | 26B ou 31B (vision 550M) | on |
+| Audio | E4B ou E2B (seuls avec audio encoder) | off |
+
+**Speculative Draft** (cas particulier) : pour les steps Executor sans tool call,
+E4B génère un draft rapide (~2s), le 26B vérifie et corrige (~5s). Gain net quand
+le draft est accepté tel quel (~60% des cas sur les tâches simples).
+
+```python
+class ModelRouter:
+    """Sélection du modèle optimal par step — inspiré du channel registry NanoClaw."""
+
+    MODELS = {
+        "triage":   "gemma4:e4b",
+        "plan":     "gemma4:26b",
+        "execute":  "gemma4:26b",
+        "draft":    "gemma4:e4b",
+        "critic":   "gemma4:31b",
+        "critic_light": "gemma4:26b",  # fallback si RAM insuffisante
+    }
+
+    def select(self, step: Step, high_stakes: bool = False) -> str:
+        if high_stakes:
+            return self.MODELS["critic"]
+        if step.tool == "none" and len(step.input) < 200:
+            return self.MODELS["draft"]
+        return self.MODELS["execute"]
+```
+
+### 3.5 Thinking Mode natif
+
+Gemma 4 intègre un mode raisonnement activable par un token de contrôle dans le system prompt.
+Le modèle sépare son raisonnement interne de sa réponse finale.
+
+**Activation :** préfixer le system prompt avec `<|think|>`
+
+**Output structuré :**
+```
+<|channel>thought
+[raisonnement interne — non exposé à l'utilisateur]
+<channel|>
+[réponse finale]
+```
+
+**Stratégie par phase :**
+
+| Phase | Thinking | Justification |
+|-------|----------|---------------|
+| Triage | off | Vitesse, classification simple |
+| Planner | on | Décomposition = raisonnement structuré |
+| Executor (tool call) | off | Exécution directe, pas d'ambiguïté |
+| Executor (génération) | on | Génération longue = risque de dérive |
+| Critic | on | Évaluation = raisonnement critique |
+
+**Best practice Gemma 4 :** en multi-turn, ne jamais inclure les blocs `thought`
+des tours précédents dans l'historique. Seule la réponse finale est conservée.
+
+### 3.6 Sampling (recommandations Google)
+
+Paramètres standardisés pour Gemma 4 :
+
+```python
+SAMPLING_DEFAULT  = {"temperature": 1.0, "top_p": 0.95, "top_k": 64}
+SAMPLING_CRITIC   = {"temperature": 0.3, "top_p": 0.9,  "top_k": 32}   # déterministe
+SAMPLING_PLANNER  = {"temperature": 0.7, "top_p": 0.95, "top_k": 64}   # structuré
+```
+
+### 3.7 Patterns d'infrastructure
+
+Patterns extraits de l'analyse de [NanoClaw](https://github.com/qwibitai/nanoclaw),
+un framework agent containerisé. Transposés ici pour un agent local autonome.
+
+**Tool Registry (factory pattern)**
+
+Découplage total entre l'orchestrateur et les outils disponibles. Chaque outil
+s'enregistre lui-même ; l'orchestrateur ne connaît que l'interface.
+
+```python
+_registry: dict[str, Callable[[], Tool | None]] = {}
+
+def register_tool(name: str, factory: Callable[[], Tool | None]) -> None:
+    _registry[name] = factory
+
+def get_tool(name: str) -> Tool | None:
+    factory = _registry.get(name)
+    return factory() if factory else None   # None = outil indisponible, skip
+```
+
+Ajouter un outil = créer un fichier dans `tools/`, appeler `register_tool` à l'import.
+Zéro modification dans `agent.py` ou `executor.py`.
+
+**Exécution sandboxée (subprocess isolé)**
+
+Pour `code_exec`, isoler via subprocess avec timeout et restrictions :
+
+```python
+async def sandbox_exec(code: str, timeout: int = 30) -> ExecResult:
+    proc = await asyncio.create_subprocess_exec(
+        "python3", "-c", code,
+        stdout=PIPE, stderr=PIPE,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout)
+        return ExecResult(code=proc.returncode, stdout=stdout, stderr=stderr)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return ExecResult(code=-1, stdout=b"", stderr=b"timeout")
+```
+
+**Cursor recovery (résilience aux crashs)**
+
+Persister l'avancement du plan step par step. En cas de crash, reprendre
+au dernier step réussi plutôt que depuis zéro.
+
+```python
+# Après chaque step réussi :
+state.cursor = step.id
+state.persist()  # SQLite ou JSON atomique (write tmp + rename)
+
+# Au redémarrage :
+plan = state.load_plan()
+resume_from = state.cursor + 1  # reprendre au step suivant
+```
+
+**Retry exponentiel**
+
+Sur les échecs Ollama (OOM, timeout, modèle pas chargé) :
+
+```python
+BASE_RETRY_MS = 2000
+MAX_RETRIES = 4
+
+async def with_retry(fn, *args):
+    for attempt in range(MAX_RETRIES):
+        try:
+            return await fn(*args)
+        except OllamaError:
+            await asyncio.sleep(BASE_RETRY_MS * 2**attempt / 1000)
+    raise MaxRetriesExceeded()
+```
+
+---
+
+### 3.8 Memory-Augmented Context (Neo4j)
 
 Le graph Neo4j est l'avantage différenciant vs API cloud : une mémoire structurée et
 persistante, sans coût marginal par session.
@@ -258,8 +434,11 @@ agent/
   │   ├── code_exec.py      # Sandbox Python (subprocess isolé)
   │   └── file_io.py        # Lecture/écriture fichiers
   ├── models/
-  │   ├── ollama_client.py  # Wrapper Ollama API (OpenAI-compat)
-  │   └── router.py         # Sélection backbone vs draft selon heuristique
+  │   ├── ollama_client.py  # Appels directs Ollama /api/chat (pas de SDK tiers)
+  │   └── router.py         # ModelRouter : E4B / 26B / 31B selon heuristique
+  ├── infra/
+  │   ├── state.py          # Cursor recovery + persistence atomique
+  │   └── retry.py          # Retry exponentiel sur erreurs Ollama
   ├── agent.py              # Orchestrateur principal
   ├── config.yaml           # Tous les paramètres configurables
   └── AGENT_PATTERN.md      # Ce document
@@ -273,11 +452,24 @@ agent/
 # config.yaml
 
 models:
-  planner:        gemma4:27b
-  executor:       gemma4:27b
+  triage:         gemma4:e4b       # Classification rapide, thinking off
+  planner:        gemma4:26b       # MoE, thinking on
+  executor:       gemma4:26b       # MoE, thinking adaptatif
   executor_draft: gemma4:e4b       # Speculative Draft mode
-  critic:         gemma4:27b
+  critic:         gemma4:31b       # Dense, thinking on — évaluation rigoureuse
+  critic_light:   gemma4:26b       # Fallback si RAM saturée
   ollama_base_url: http://localhost:11434
+
+sampling:
+  default:  { temperature: 1.0, top_p: 0.95, top_k: 64 }
+  planner:  { temperature: 0.7, top_p: 0.95, top_k: 64 }
+  critic:   { temperature: 0.3, top_p: 0.9,  top_k: 32 }
+
+thinking:
+  triage:   false
+  planner:  true
+  executor: false                  # true uniquement pour génération longue
+  critic:   true
 
 thresholds:
   min_score:        6.5            # Score Critic en-dessous = retry
@@ -292,6 +484,16 @@ speculative:
   enabled:          true
   max_input_tokens: 200            # Seuil d'activation du draft E4B
   tools_bypass:     ["code", "search"]  # Toujours 26B pour ces tools
+
+vision:
+  token_budget_ocr:    1120        # Documents, OCR, texte fin
+  token_budget_default: 280        # Usage général
+  token_budget_fast:    70         # Classification, captioning
+
+recovery:
+  persist_cursor:   true           # Sauvegarder l'avancement step par step
+  state_file:       ./state/agent_state.json
+  atomic_write:     true           # write .tmp + rename
 
 memory:
   neo4j_uri:        bolt://localhost:7687
@@ -318,16 +520,23 @@ logging:
 
 ```python
 async def run(user_input: str) -> AgentResult:
+    # 0. Triage — E4B, rapide, décide du pipeline
+    complexity = await triage.classify(user_input)   # simple | complex | multimodal
+
+    if complexity == "simple":
+        return await executor.direct(user_input)     # E4B seul, pas de plan
+
     # 1. Memory read
     context = await memory.get_context(user_input)
 
-    # 2. Plan
+    # 2. Plan (26B MoE, thinking on)
     plan = await planner.plan(user_input, context)
+    state.save_plan(plan)
 
     # 3. Execute (séquentiel ou parallel selon plan.parallel)
-    results = await executor.execute(plan)
+    results = await executor.execute(plan, on_step_done=state.advance_cursor)
 
-    # 4. Critique + retry intégré
+    # 4. Critique + retry (31B Dense pour high stakes, 26B sinon)
     scored = await critic.evaluate(plan, results)
 
     # 5. Memory write
@@ -355,25 +564,28 @@ async def evaluate(plan: Plan, results: list[StepResult]) -> list[ScoredResult]:
 
 ## 7. Analyse des compromis
 
-| Dimension | API Cloud seul | Local seul | Pattern hybride |
+| Dimension | API Cloud | Modèle unique local | Multi-modèle local (ce pattern) |
 |---|---|---|---|
-| Coût marginal | €€€ à l'échelle | €0 (matériel fixé) | €0 local + € rare cloud |
-| Latence | 100–500ms | 3–15s | 3–15s local |
-| Qualité brute | ★★★★★ | ★★★ | ★★★★ (scaffold) |
+| Coût marginal | €€€ | €0 | €0 |
+| Latence triage | 100ms | 3–15s (surdimensionné) | < 1s (E4B) |
+| Latence raisonnement | 200–500ms | 3–15s | 3–15s (26B/31B) |
+| Qualité brute | ★★★★★ | ★★★ | ★★★★ (scaffold + 31B Critic) |
 | Souveraineté | Données ext. | 100% local | 100% local |
-| Contexte long | 200K payant | 256K gratuit | 256K gratuit |
-| Mémoire persistante | Stateless | Neo4j natif | Neo4j natif |
-| Multimodal | Oui (payant) | Oui (natif) | Oui |
+| Contexte long | 200K payant | 256K | 256K (26B/31B) |
+| Mémoire persistante | Stateless | Neo4j | Neo4j |
+| Multimodal | Text+Image | Text+Image | Text+Image+Audio (E4B) |
+| Résilience | Dépend du réseau | Dépend du GPU | Retry + cursor recovery |
 
-### Quand basculer sur API cloud ?
+### Pourquoi pas de dépendance cloud ?
 
-- Raisonnement long-chain non décomposable (analyse stratégique ouverte)
-- Latence critique (< 1s) pour UX interactive temps réel
-- Volume très faible + qualité critique : coût API négligeable
-- **Critic final à fort enjeu** : utiliser Claude Opus comme ultime Critic sur les décisions importantes
+Ce pattern est conçu pour être **100% autonome**. Gemma 4 31B Dense (AIME 89.2%,
+GPQA 84.3%) atteint un niveau de qualité suffisant pour le Critic sans API externe.
+Le scaffold fort (plan structuré + retry + mémoire) compense l'écart résiduel avec
+les modèles frontier cloud.
 
-Pattern recommandé : Gemma 4 local pour 90% des appels (volume, contexte, mémoire),
-API cloud uniquement pour le Critic final sur les outputs à fort enjeu.
+**Seul cas où reconsidérer :** raisonnement long-chain non décomposable sur des domaines
+hors distribution du modèle. Dans ce cas, ajouter un fallback API est trivial
+(même interface Ollama OpenAI-compatible).
 
 ---
 
@@ -390,7 +602,8 @@ Avantage clé : aucun code client n'est envoyé à une API externe.
 ### 8.2 Extraction docs EDF/Nuward (PTI/DEX)
 - **Planner** : identifie les sections à extraire selon le schéma Polarion cible
 - **Executor SoT** : traite chaque section en appel indépendant (256K contexte exploité)
-- **Critic** : valide la conformité structurelle au schéma Capella
+- **Vision** : OCR des schémas techniques avec budget tokens 1120 (résolution max)
+- **Critic** : valide la conformité structurelle au schéma Capella (31B Dense, thinking on)
 - **Output** : JSON structuré prêt pour import
 
 ### 8.3 Running coach (WhatsApp/Telegram)
@@ -403,12 +616,16 @@ Avantage clé : aucun code client n'est envoyé à une API externe.
 
 ## 9. Étapes suivantes
 
-- [ ] Valider `gemma4:27b` via Ollama sur M4 Pro — mesurer tokens/s réels et VRAM utilisée
+- [ ] Benchmark local : `gemma4:26b` et `gemma4:31b` sur M4 Pro — tokens/s, RAM réelle, temps de swap
+- [ ] Valider le triage E4B : classifier 50 inputs variés, mesurer précision et latence
+- [ ] Implémenter `ollama_client.py` : appels directs `/api/chat` avec tools + thinking toggle
+- [ ] Implémenter `router.py` : ModelRouter avec heuristiques de sélection
 - [ ] Implémenter `planner.py` avec validation pydantic stricte du plan JSON
-- [ ] Implémenter `critic.py` avec boucle retry et logging structuré
+- [ ] Implémenter `critic.py` avec boucle retry — comparer 26B vs 31B comme Critic
+- [ ] Implémenter `state.py` : cursor recovery + persistence atomique
 - [ ] Connecter Neo4j : tester enrichissement contexte sur un use case réel
-- [ ] Benchmark Critic : calibrer le seuil 6.5 sur 20 tâches échantillon
-- [ ] Évaluer `gemma4:e4b` comme draft rapide — mesurer gain latence réel
+- [ ] Benchmark Critic : calibrer le seuil 6.5 sur 20 tâches échantillon (26B et 31B)
+- [ ] Tester vision : extraction document avec budget tokens variable (280 vs 1120)
 - [ ] Choisir le use case pilote : **code review UrbaHive** (recommandé, périmètre borné)
 
 ---
