@@ -18,7 +18,8 @@ class TestWebSearchToolUnit:
         assert "ERROR" in result
 
     @pytest.mark.asyncio
-    async def test_no_api_key(self):
+    async def test_no_api_key(self, monkeypatch):
+        monkeypatch.delenv("BRAVE_API_KEY", raising=False)
         tool = WebSearchTool(api_key="")
         result = await tool.run("test query")
         assert "BRAVE_API_KEY" in result

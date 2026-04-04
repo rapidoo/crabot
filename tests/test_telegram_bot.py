@@ -59,8 +59,9 @@ class TestTelegramConfig:
 
 
 class TestTelegramBotInit:
-    def test_missing_token_raises(self):
+    def test_missing_token_raises(self, monkeypatch):
         """Bot should fail to init without a token."""
+        monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
         try:
             from agent.interfaces.telegram_bot import TelegramBot, HAS_TELEGRAM
             if not HAS_TELEGRAM:
