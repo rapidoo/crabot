@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nano-agent.daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/flebris/nano/.venv/bin/python</string>
+        <string>-m</string>
+        <string>agent</string>
+        <string>--daemon</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/flebris/nano</string>
+
+    <!-- Démarrage automatique au login -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Auto-restart si crash (max 3 restart en 60s) -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Logs -->
+    <key>StandardOutPath</key>
+    <string>/Users/flebris/nano/logs/daemon-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/flebris/nano/logs/daemon-stderr.log</string>
+
+    <!-- Environnement -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/flebris/nano/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- Throttle : attendre 10s entre les restart -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>

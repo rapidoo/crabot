@@ -1,0 +1,22 @@
+[
+  {"category": "code", "prompt": "Write a Python function to compute the Fibonacci sequence"},
+  {"category": "code", "prompt": "Implement a binary search algorithm in Python"},
+  {"category": "code", "prompt": "Write a Python class for a linked list with insert and delete"},
+  {"category": "code", "prompt": "Create a Python decorator that caches function results"},
+  {"category": "simple", "prompt": "What is the capital of France?"},
+  {"category": "simple", "prompt": "What is 17 * 23?"},
+  {"category": "simple", "prompt": "How many days are in a leap year?"},
+  {"category": "simple", "prompt": "What does HTTP stand for?"},
+  {"category": "research", "prompt": "Explain the difference between TCP and UDP"},
+  {"category": "research", "prompt": "What are the SOLID principles in software engineering?"},
+  {"category": "research", "prompt": "Explain how garbage collection works in Python"},
+  {"category": "research", "prompt": "What is the CAP theorem in distributed systems?"},
+  {"category": "complex", "prompt": "Design a REST API for a todo list application with CRUD operations"},
+  {"category": "complex", "prompt": "Write a Python script that reads a CSV file and generates summary statistics"},
+  {"category": "complex", "prompt": "Implement a simple rate limiter using the token bucket algorithm"},
+  {"category": "complex", "prompt": "Create a Python context manager for database transactions"},
+  {"category": "multi-step", "prompt": "Read the file agent/config.yaml and list all the model names configured"},
+  {"category": "multi-step", "prompt": "Write a Python function to validate email addresses, then test it with 3 examples"},
+  {"category": "multi-step", "prompt": "Explain merge sort, then implement it in Python"},
+  {"category": "multi-step", "prompt": "Search for all Python files in the agent directory and count them"}
+]

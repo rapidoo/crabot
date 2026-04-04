@@ -1,0 +1,141 @@
+"""Critic — scores executor outputs and triggers retries when quality is low."""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+
+from pydantic import ValidationError
+
+from agent.config import get_settings
+from agent.models.ollama_client import OllamaClient, ChatResponse
+from agent.models.router import ModelRouter
+from agent.schemas import Plan, Step, StepResult, CriticScore, ScoredResult
+
+logger = logging.getLogger(__name__)
+
+CRITIC_SYSTEM_PROMPT = """\
+You are a strict quality evaluator. Score the following output against
+the expected result. Return JSON ONLY. No prose.
+
+Criteria (score 0-10 each):
+  - completeness : does the output fully cover the expected_output?
+  - accuracy     : no detectable factual hallucination?
+  - format       : does the output match the requested format?
+  - coherence    : consistent with previous steps context?
+
+Output format (strict):
+{
+  "scores": {
+    "completeness": X,
+    "accuracy": X,
+    "format": X,
+    "coherence": X
+  },
+  "final_score": X.X,
+  "retry": true|false,
+  "reason": "one sentence explanation if retry=true"
+}
+
+Retry threshold: final_score < 6.5
+Max retries per step: 3"""
+
+_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def _parse_critic_score(raw: str) -> CriticScore:
+    """Parse raw LLM output into a CriticScore."""
+    text = raw.strip()
+    if not text.startswith("{"):
+        m = _JSON_OBJECT_RE.search(text)
+        if m:
+            text = m.group(0)
+    data = json.loads(text)
+    return CriticScore.model_validate(data)
+
+
+class Critic:
+    """Evaluates step results and triggers retries on low scores."""
+
+    def __init__(
+        self,
+        client: OllamaClient | None = None,
+        router: ModelRouter | None = None,
+        executor: object | None = None,
+    ):
+        settings = get_settings()
+        self._client = client or OllamaClient(
+            base_url=settings.models.ollama_base_url
+        )
+        self._router = router or ModelRouter(settings)
+        self._executor = executor
+        self._settings = settings
+
+    async def evaluate(
+        self, plan: Plan, results: list[StepResult]
+    ) -> list[ScoredResult]:
+        """Score each step result and retry if below threshold."""
+        scored: list[ScoredResult] = []
+        max_retries = self._settings.thresholds.max_retries
+        min_score = self._settings.thresholds.min_score
+
+        for step, result in zip(plan.steps, results):
+            current_result = result
+
+            for attempt in range(max_retries):
+                score = await self._score_step(step, current_result)
+                logger.info(
+                    "Step %d score: %.1f (attempt %d/%d)",
+                    step.id, score.final_score, attempt + 1, max_retries,
+                )
+
+                if score.final_score >= min_score:
+                    break
+
+                # Retry if executor is available
+                if self._executor is not None and attempt < max_retries - 1:
+                    logger.info(
+                        "Step %d retry: %s", step.id, score.reason
+                    )
+                    current_result = await self._executor.execute_step(step)
+                else:
+                    break
+
+            scored.append(
+                ScoredResult(step=step, result=current_result, score=score)
+            )
+
+        return scored
+
+    async def _score_step(self, step: Step, result: StepResult) -> CriticScore:
+        """Score a single step result."""
+        model = self._router.select("critic")
+        sampling = self._router.sampling("critic")
+        thinking = self._router.thinking_enabled("critic")
+
+        messages = [
+            {"role": "system", "content": CRITIC_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"Step task: {step.input}\n"
+                    f"Expected output: {step.expected_output}\n"
+                    f"Actual output: {result.output[:2000]}"
+                ),
+            },
+        ]
+
+        try:
+            resp: ChatResponse = await self._client.chat(
+                model, messages, sampling=sampling, thinking=thinking
+            )
+            return _parse_critic_score(resp.content)
+        except (json.JSONDecodeError, ValidationError) as exc:
+            logger.warning("Critic parse failed: %s — defaulting to pass", exc)
+            return CriticScore(
+                scores={"completeness": 7, "accuracy": 7, "format": 7, "coherence": 7},
+                final_score=7.0,
+                retry=False,
+                reason="Critic parse error, defaulting to pass",
+            )

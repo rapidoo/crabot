@@ -1,0 +1,69 @@
+models:
+  triage:         gemma4
+  planner:        gemma4
+  executor:       gemma4
+  executor_draft: gemma4
+  critic:         gemma4:31b
+  critic_light:   gemma4
+  ollama_base_url: http://localhost:11434
+
+sampling:
+  default:  { temperature: 1.0, top_p: 0.95, top_k: 64 }
+  planner:  { temperature: 0.7, top_p: 0.95, top_k: 64 }
+  critic:   { temperature: 0.3, top_p: 0.9,  top_k: 32 }
+
+thinking:
+  triage:   false
+  planner:  true
+  executor: false
+  critic:   true
+
+thresholds:
+  min_score:        6.5
+  max_retries:      3
+  parallel_steps:   true
+
+skeleton:
+  enabled:          true
+  token_threshold:  500
+
+speculative:
+  enabled:          true
+  max_input_tokens: 200
+  tools_bypass:     ["code", "search"]
+
+vision:
+  token_budget_ocr:    1120
+  token_budget_default: 280
+  token_budget_fast:    70
+
+recovery:
+  persist_cursor:   true
+  state_file:       ./state/agent_state.json
+  atomic_write:     true
+
+memory:
+  neo4j_uri:        bolt://localhost:7687
+  neo4j_user:       neo4j
+  neo4j_password:   guicho35carb
+  context_k:        5
+  write_threshold:  5.0
+  entity_extraction: true
+
+context:
+  max_tokens_per_call: 32768
+  skeleton_threshold:  500
+  trace_in_context:    true
+
+telegram:
+  bot_token: ""                # Token BotFather — ou env TELEGRAM_BOT_TOKEN
+  allowed_users: []            # User IDs autorisés (vide = tout le monde)
+  max_message_length: 4000
+
+daemon:
+  max_concurrent: 3            # Max requêtes agent simultanées
+  request_timeout: 300         # Timeout par requête (5 min)
+
+logging:
+  level: INFO
+  trace_file: ./logs/agent_trace.jsonl

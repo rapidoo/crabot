@@ -1,0 +1,283 @@
+[
+  {
+    "index": 1,
+    "category": "code",
+    "prompt": "Write a Python function to compute the Fibonacci sequence",
+    "elapsed_s": 43.5,
+    "steps": 1,
+    "avg_score": 0.0,
+    "scores": [
+      0.0
+    ],
+    "path": "complex",
+    "goal": "Write a Python function to compute the Fibonacci sequence.",
+    "success": true
+  },
+  {
+    "index": 2,
+    "category": "code",
+    "prompt": "Implement a binary search algorithm in Python",
+    "elapsed_s": 39.0,
+    "steps": 1,
+    "avg_score": 0.0,
+    "scores": [
+      0.0
+    ],
+    "path": "complex",
+    "goal": "Implement a binary search algorithm in Python",
+    "success": true
+  },
+  {
+    "index": 3,
+    "category": "code",
+    "prompt": "Write a Python class for a linked list with insert and delete",
+    "elapsed_s": 44.7,
+    "steps": 1,
+    "avg_score": 0.0,
+    "scores": [
+      0.0
+    ],
+    "path": "complex",
+    "goal": "Write a Python class representing a linked list with methods for insertion and d",
+    "success": true
+  },
+  {
+    "index": 4,
+    "category": "code",
+    "prompt": "Create a Python decorator that caches function results",
+    "elapsed_s": 44.0,
+    "steps": 1,
+    "avg_score": 0.0,
+    "scores": [
+      0.0
+    ],
+    "path": "complex",
+    "goal": "Create a Python decorator that caches function results",
+    "success": true
+  },
+  {
+    "index": 5,
+    "category": "simple",
+    "prompt": "What is the capital of France?",
+    "elapsed_s": 0.7,
+    "steps": 1,
+    "avg_score": 8.0,
+    "scores": [
+      8.0
+    ],
+    "path": "simple",
+    "goal": "What is the capital of France?",
+    "success": true
+  },
+  {
+    "index": 6,
+    "category": "simple",
+    "prompt": "What is 17 * 23?",
+    "elapsed_s": 4.7,
+    "steps": 1,
+    "avg_score": 8.0,
+    "scores": [
+      8.0
+    ],
+    "path": "simple",
+    "goal": "What is 17 * 23?",
+    "success": true
+  },
+  {
+    "index": 7,
+    "category": "simple",
+    "prompt": "How many days are in a leap year?",
+    "elapsed_s": 3.9,
+    "steps": 1,
+    "avg_score": 8.0,
+    "scores": [
+      8.0
+    ],
+    "path": "simple",
+    "goal": "How many days are in a leap year?",
+    "success": true
+  },
+  {
+    "index": 8,
+    "category": "simple",
+    "prompt": "What does HTTP stand for?",
+    "elapsed_s": 0.7,
+    "steps": 1,
+    "avg_score": 8.0,
+    "scores": [
+      8.0
+    ],
+    "path": "simple",
+    "goal": "What does HTTP stand for?",
+    "success": true
+  },
+  {
+    "index": 9,
+    "category": "research",
+    "prompt": "Explain the difference between TCP and UDP",
+    "elapsed_s": 38.8,
+    "steps": 1,
+    "avg_score": 8.0,
+    "scores": [
+      8.0
+    ],
+    "path": "simple",
+    "goal": "Explain the difference between TCP and UDP",
+    "success": true
+  },
+  {
+    "index": 10,
+    "category": "research",
+    "prompt": "What are the SOLID principles in software engineering?",
+    "elapsed_s": 26.9,
+    "steps": 1,
+    "avg_score": 8.0,
+    "scores": [
+      8.0
+    ],
+    "path": "simple",
+    "goal": "What are the SOLID principles in software engineering?",
+    "success": true
+  },
+  {
+    "index": 11,
+    "category": "research",
+    "prompt": "Explain how garbage collection works in Python",
+    "elapsed_s": 63.6,
+    "steps": 1,
+    "avg_score": 0.2,
+    "scores": [
+      0.25
+    ],
+    "path": "complex",
+    "goal": "Explain how garbage collection works in Python.",
+    "success": true
+  },
+  {
+    "index": 12,
+    "category": "research",
+    "prompt": "What is the CAP theorem in distributed systems?",
+    "elapsed_s": 22.3,
+    "steps": 1,
+    "avg_score": 8.0,
+    "scores": [
+      8.0
+    ],
+    "path": "simple",
+    "goal": "What is the CAP theorem in distributed systems?",
+    "success": true
+  },
+  {
+    "index": 13,
+    "category": "complex",
+    "prompt": "Design a REST API for a todo list application with CRUD operations",
+    "elapsed_s": 80.6,
+    "steps": 1,
+    "avg_score": 8.5,
+    "scores": [
+      8.5
+    ],
+    "path": "complex",
+    "goal": "Design a REST API for a todo list application with CRUD operations.",
+    "success": true
+  },
+  {
+    "index": 14,
+    "category": "complex",
+    "prompt": "Write a Python script that reads a CSV file and generates summary statistics",
+    "elapsed_s": 45.8,
+    "steps": 1,
+    "avg_score": 0.0,
+    "scores": [
+      0.0
+    ],
+    "path": "complex",
+    "goal": "Write a Python script that reads a CSV file and generates summary statistics",
+    "success": true
+  },
+  {
+    "index": 15,
+    "category": "complex",
+    "prompt": "Implement a simple rate limiter using the token bucket algorithm",
+    "elapsed_s": 53.9,
+    "steps": 1,
+    "avg_score": 0.0,
+    "scores": [
+      0.0
+    ],
+    "path": "complex",
+    "goal": "Implement a simple rate limiter using the token bucket algorithm",
+    "success": true
+  },
+  {
+    "index": 16,
+    "category": "complex",
+    "prompt": "Create a Python context manager for database transactions",
+    "elapsed_s": 66.1,
+    "steps": 1,
+    "avg_score": 0.0,
+    "scores": [
+      0.0
+    ],
+    "path": "complex",
+    "goal": "Create a Python context manager for managing database transactions.",
+    "success": true
+  },
+  {
+    "index": 17,
+    "category": "multi-step",
+    "prompt": "Read the file agent/config.yaml and list all the model names configured",
+    "elapsed_s": 30.9,
+    "steps": 1,
+    "avg_score": 0.2,
+    "scores": [
+      0.25
+    ],
+    "path": "complex",
+    "goal": "List all model names configured in the agent/config.yaml file.",
+    "success": true
+  },
+  {
+    "index": 18,
+    "category": "multi-step",
+    "prompt": "Write a Python function to validate email addresses, then test it with 3 example",
+    "elapsed_s": 54.8,
+    "steps": 1,
+    "avg_score": 0.0,
+    "scores": [
+      0.0
+    ],
+    "path": "complex",
+    "goal": "Write a Python function to validate email addresses and test it with 3 examples.",
+    "success": true
+  },
+  {
+    "index": 19,
+    "category": "multi-step",
+    "prompt": "Explain merge sort, then implement it in Python",
+    "elapsed_s": 92.8,
+    "steps": 2,
+    "avg_score": 4.9,
+    "scores": [
+      9.75,
+      0.0
+    ],
+    "path": "complex",
+    "goal": "Explain the merge sort algorithm and then provide a Python implementation of it.",
+    "success": true
+  },
+  {
+    "index": 20,
+    "category": "multi-step",
+    "prompt": "Search for all Python files in the agent directory and count them",
+    "elapsed_s": 37.3,
+    "steps": 1,
+    "avg_score": 10.0,
+    "scores": [
+      10.0
+    ],
+    "path": "complex",
+    "goal": "Search for and count all Python files within the agent directory.",
+    "success": true
+  }
+]
