@@ -98,6 +98,38 @@ class LoggingConfig(BaseModel):
     trace_file: str = "./logs/agent_trace.jsonl"
 
 
+class CronTaskConfig(BaseModel):
+    name: str
+    schedule: str  # cron expression or interval in seconds
+    prompt: str
+    schedule_type: str = "cron"  # "cron" | "interval" | "once"
+
+
+class SchedulerConfig(BaseModel):
+    enabled: bool = False
+    cron_tasks: list[CronTaskConfig] = []
+    watch_paths: list[str] = []
+    self_schedule: bool = True
+
+
+class FeedbackConfig(BaseModel):
+    enabled: bool = True
+    good_score: float = 9.0
+    bad_score: float = 2.0
+
+
+class AdaptiveConfig(BaseModel):
+    enabled: bool = True
+    min_samples: int = 20
+    threshold_method: str = "mean_minus_std"
+
+
+class ReflectionConfig(BaseModel):
+    enabled: bool = False
+    last_n_episodes: int = 50
+    auto_apply: bool = False
+
+
 class Settings(BaseModel):
     models: ModelsConfig = ModelsConfig()
     sampling: SamplingConfig = SamplingConfig()
@@ -112,6 +144,10 @@ class Settings(BaseModel):
     telegram: TelegramConfig = TelegramConfig()
     daemon: DaemonConfig = DaemonConfig()
     logging: LoggingConfig = LoggingConfig()
+    scheduler: SchedulerConfig = SchedulerConfig()
+    feedback: FeedbackConfig = FeedbackConfig()
+    adaptive: AdaptiveConfig = AdaptiveConfig()
+    reflection: ReflectionConfig = ReflectionConfig()
 
 
 _DEFAULT_CONFIG_PATH = Path(__file__).parent / "config.yaml"

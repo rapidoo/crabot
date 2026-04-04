@@ -224,3 +224,142 @@ class MemoryClient:
         except Exception as exc:
             logger.warning("Memory write failed: %s", exc)
             return None
+
+    async def update_episode_score(
+        self, episode_id: str, score: float, reason: str | None = None
+    ) -> None:
+        """Override an episode's score (user feedback /good or /bad)."""
+        if not self._available:
+            return
+        try:
+            async with self._driver.session() as session:
+                query = "MATCH (ep:Episode {id: $id}) SET ep.score = $score"
+                params: dict = {"id": episode_id, "score": score}
+                if reason:
+                    query += ", ep.feedback_reason = $reason"
+                    params["reason"] = reason
+                await session.run(query, **params)
+            logger.info("Memory: updated episode %s score to %.1f", episode_id, score)
+        except Exception as exc:
+            logger.warning("Memory score update failed: %s", exc)
+
+    async def persist_skill(
+        self, name: str, tool_chain: list[str], score: float
+    ) -> None:
+        """Create or update a Skill node from a successful tool chain."""
+        if not self._available:
+            return
+        try:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MERGE (s:Skill {name: $name})
+                    SET s.tool_chain = $tool_chain,
+                        s.success_rate = CASE WHEN s.usage_count IS NULL
+                          THEN $score
+                          ELSE (s.success_rate * s.usage_count + $score) / (s.usage_count + 1)
+                        END,
+                        s.usage_count = coalesce(s.usage_count, 0) + 1,
+                        s.last_used = datetime()
+                    """,
+                    name=name, tool_chain=tool_chain, score=score,
+                )
+            logger.info("Memory: persisted skill '%s' (score=%.1f)", name, score)
+        except Exception as exc:
+            logger.warning("Memory skill write failed: %s", exc)
+
+    async def get_skills(self, min_score: float = 7.0, limit: int = 5) -> list[dict]:
+        """Retrieve top skills for injection into the Planner."""
+        if not self._available:
+            return []
+        try:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (s:Skill) WHERE s.success_rate > $min_score
+                    RETURN s.name AS name, s.tool_chain AS tool_chain,
+                           s.success_rate AS score, s.usage_count AS uses
+                    ORDER BY s.success_rate DESC LIMIT $limit
+                    """,
+                    min_score=min_score, limit=limit,
+                )
+                return [dict(r) async for r in result]
+        except Exception as exc:
+            logger.warning("Memory skill read failed: %s", exc)
+            return []
+
+    async def persist_goal(
+        self,
+        goal_id: str,
+        description: str,
+        priority: int = 3,
+        parent_goal_id: str | None = None,
+    ) -> None:
+        """Create or update a persistent Goal node."""
+        if not self._available:
+            return
+        try:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MERGE (g:Goal {id: $id})
+                    SET g.description = $description,
+                        g.status = coalesce(g.status, "active"),
+                        g.priority = $priority,
+                        g.created_at = coalesce(g.created_at, datetime())
+                    """,
+                    id=goal_id, description=description, priority=priority,
+                )
+                if parent_goal_id:
+                    await session.run(
+                        """
+                        MATCH (parent:Goal {id: $parent_id})
+                        MATCH (child:Goal {id: $child_id})
+                        MERGE (parent)-[:DECOMPOSED_INTO]->(child)
+                        """,
+                        parent_id=parent_goal_id, child_id=goal_id,
+                    )
+            logger.info("Memory: persisted goal '%s'", goal_id)
+        except Exception as exc:
+            logger.warning("Memory goal write failed: %s", exc)
+
+    async def get_active_goals(self) -> list[dict]:
+        """Retrieve active goals ordered by priority."""
+        if not self._available:
+            return []
+        try:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (g:Goal {status: "active"})
+                    RETURN g.id AS id, g.description AS description,
+                           g.priority AS priority
+                    ORDER BY g.priority ASC, g.created_at ASC
+                    """,
+                )
+                return [dict(r) async for r in result]
+        except Exception as exc:
+            logger.warning("Memory goal read failed: %s", exc)
+            return []
+
+    async def complete_goal(self, goal_id: str, episode_id: str | None = None) -> None:
+        """Mark a goal as done, optionally linking to the achieving episode."""
+        if not self._available:
+            return
+        try:
+            async with self._driver.session() as session:
+                await session.run(
+                    'MATCH (g:Goal {id: $id}) SET g.status = "done"',
+                    id=goal_id,
+                )
+                if episode_id:
+                    await session.run(
+                        """
+                        MATCH (g:Goal {id: $goal_id})
+                        MATCH (ep:Episode {id: $ep_id})
+                        MERGE (g)-[:ACHIEVED_BY]->(ep)
+                        """,
+                        goal_id=goal_id, ep_id=episode_id,
+                    )
+        except Exception as exc:
+            logger.warning("Memory goal complete failed: %s", exc)

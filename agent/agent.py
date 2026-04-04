@@ -17,7 +17,7 @@ from agent.core.critic import Critic
 from agent.infra.state import StateManager
 from agent.memory.neo4j_client import MemoryClient
 from agent.memory.entity_extractor import EntityExtractor
-from agent.schemas import AgentResult, ScoredResult, CriticScore, StepResult
+from agent.schemas import AgentResult, ScoredResult, CriticScore, StepResult, Plan
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,16 @@ class Agent:
         self._memory = MemoryClient()
         self._entity_extractor = EntityExtractor(client=client, router=router)
         self._last_episode_id: str | None = None
+
+    @property
+    def last_episode_id(self) -> str | None:
+        """Last persisted episode ID (for feedback /good /bad)."""
+        return self._last_episode_id
+
+    @property
+    def memory(self) -> MemoryClient:
+        """Expose memory client for feedback and external queries."""
+        return self._memory
 
     async def initialize(self) -> None:
         """Connect to optional services (Neo4j). Safe to skip."""
@@ -146,9 +156,10 @@ class Agent:
         agent_result = AgentResult(goal=plan.goal, results=scored)
         self._write_trace(user_input, agent_result, elapsed)
 
-        # Phase 4: Memory write — persist episode
+        # Phase 4: Memory write — persist episode + extract skills
         if self._memory.available:
             await self._persist_memory(user_input, agent_result)
+            await self._extract_skills(plan, scored)
 
         return agent_result
 
@@ -185,6 +196,26 @@ class Agent:
 
         except Exception as exc:
             logger.warning("Memory write failed: %s", exc)
+
+    async def _extract_skills(
+        self, plan: Plan, scored: list[ScoredResult]
+    ) -> None:
+        """Extract reusable skills from high-scoring tool chains."""
+        if not scored:
+            return
+        avg = sum(s.score.final_score for s in scored) / len(scored)
+        if avg < 8.0:
+            return
+        tool_chain = [s.step.tool for s in scored if s.step.tool != "none"]
+        if len(tool_chain) < 2:
+            return
+        skill_name = f"{plan.goal[:50]}_{hash(tuple(tool_chain)) % 10000}"
+        try:
+            await self._memory.persist_skill(skill_name, tool_chain, avg)
+            logger.info("Skill extracted: %s (chain=%s, score=%.1f)",
+                        skill_name, tool_chain, avg)
+        except Exception as exc:
+            logger.warning("Skill extraction failed: %s", exc)
 
     def _write_trace(
         self,

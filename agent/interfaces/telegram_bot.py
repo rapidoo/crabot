@@ -78,6 +78,9 @@ class TelegramBot:
 
         self._app.add_handler(CommandHandler("start", self._handle_start))
         self._app.add_handler(CommandHandler("help", self._handle_help))
+        self._app.add_handler(CommandHandler("good", self._handle_good))
+        self._app.add_handler(CommandHandler("bad", self._handle_bad))
+        self._app.add_handler(CommandHandler("stats", self._handle_stats))
         self._app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
         )
@@ -130,6 +133,10 @@ class TelegramBot:
             "Send me any task or question.\n\n"
             "Simple questions get a fast answer (~1s).\n"
             "Complex tasks go through planning, execution, and critique.\n\n"
+            "Commands:\n"
+            "/good — validate the last result (improves future quality)\n"
+            "/bad [reason] — reject the last result\n"
+            "/stats — show performance metrics\n\n"
             "Examples:\n"
             "• What is the capital of France?\n"
             "• Write a Python function to sort a list\n"
@@ -183,6 +190,62 @@ class TelegramBot:
         except Exception as exc:
             await update.message.reply_text(f"Error: {exc}")
             logger.error("Error processing message from %s: %s", user_name, exc)
+
+    async def _handle_good(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """User validates the last result — positive feedback signal."""
+        if not self._is_allowed(update.effective_user.id):
+            return
+        episode_id = self._agent.last_episode_id
+        if not episode_id:
+            await update.message.reply_text("No recent result to rate.")
+            return
+        if self._agent.memory.available:
+            await self._agent.memory.update_episode_score(episode_id, 9.0)
+        await update.message.reply_text("Noted. I'll remember what worked.")
+        logger.info("Feedback: /good on episode %s", episode_id)
+
+    async def _handle_bad(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """User rejects the last result — negative feedback signal."""
+        if not self._is_allowed(update.effective_user.id):
+            return
+        episode_id = self._agent.last_episode_id
+        if not episode_id:
+            await update.message.reply_text("No recent result to rate.")
+            return
+        reason = " ".join(context.args) if context.args else None
+        if self._agent.memory.available:
+            await self._agent.memory.update_episode_score(
+                episode_id, 2.0, reason=reason
+            )
+        await update.message.reply_text("Got it. I'll do better next time.")
+        logger.info("Feedback: /bad on episode %s (reason: %s)", episode_id, reason)
+
+    async def _handle_stats(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Show performance metrics."""
+        if not self._is_allowed(update.effective_user.id):
+            return
+        from agent.infra.metrics import MetricsCollector
+        mc = MetricsCollector(self._settings.logging.trace_file)
+        summary = mc.summary(last_n=50)
+        if summary.get("total_episodes", 0) == 0:
+            await update.message.reply_text("No data yet.")
+            return
+        lines = [f"📊 Last {summary['total_episodes']} episodes:"]
+        lines.append(f"  Avg score: {summary.get('avg_score', 0):.1f}")
+        lines.append(f"  Avg latency: {summary.get('avg_latency_s', 0):.1f}s")
+        lines.append(f"  Retry rate: {summary.get('retry_rate', 0):.0%}")
+        by_type = summary.get("by_task_type", {})
+        if by_type:
+            lines.append("  By type:")
+            for k, v in by_type.items():
+                lines.append(f"    {k}: {v:.1f}")
+        await update.message.reply_text("\n".join(lines))
 
     def _format_result(self, result) -> str:
         """Format an AgentResult into a readable Telegram message."""

@@ -9,6 +9,7 @@ import re
 from pydantic import ValidationError
 
 from agent.config import get_settings
+from agent.infra.metrics import MetricsCollector
 from agent.models.ollama_client import OllamaClient, ChatResponse
 from agent.models.router import ModelRouter
 from agent.schemas import Plan, Step, StepResult, CriticScore, ScoredResult
@@ -55,6 +56,32 @@ def _parse_critic_score(raw: str) -> CriticScore:
     return CriticScore.model_validate(data)
 
 
+class AdaptiveThreshold:
+    """Critic threshold calibrated on past score distribution."""
+
+    def __init__(
+        self,
+        default: float = 6.5,
+        min_samples: int = 20,
+        trace_file: str | None = None,
+    ):
+        self.default = default
+        self.min_samples = min_samples
+        self._metrics = MetricsCollector(trace_file) if trace_file else None
+
+    def get(self, task_type: str = "default") -> float:
+        """Return the adaptive threshold, or default if insufficient data."""
+        if self._metrics is None:
+            return self.default
+        scores = self._metrics.get_scores(task_type, limit=50)
+        if len(scores) < self.min_samples:
+            return self.default
+        avg = sum(scores) / len(scores)
+        std = (sum((s - avg) ** 2 for s in scores) / len(scores)) ** 0.5
+        # Reject the bottom quartile — adapted to the model's actual level
+        return max(round(avg - std, 1), 4.0)
+
+
 class Critic:
     """Evaluates step results and triggers retries on low scores."""
 
@@ -71,6 +98,17 @@ class Critic:
         self._router = router or ModelRouter(settings)
         self._executor = executor
         self._settings = settings
+        adaptive_cfg = getattr(settings, "adaptive", None)
+        if adaptive_cfg and adaptive_cfg.enabled:
+            self._threshold = AdaptiveThreshold(
+                default=settings.thresholds.min_score,
+                min_samples=adaptive_cfg.min_samples,
+                trace_file=settings.logging.trace_file,
+            )
+        else:
+            self._threshold = AdaptiveThreshold(
+                default=settings.thresholds.min_score
+            )
 
     async def evaluate(
         self, plan: Plan, results: list[StepResult]
@@ -78,7 +116,7 @@ class Critic:
         """Score each step result and retry if below threshold."""
         scored: list[ScoredResult] = []
         max_retries = self._settings.thresholds.max_retries
-        min_score = self._settings.thresholds.min_score
+        min_score = self._threshold.get()
 
         for step, result in zip(plan.steps, results):
             current_result = result

@@ -67,3 +67,28 @@ daemon:
 logging:
   level: INFO
   trace_file: ./logs/agent_trace.jsonl
+
+scheduler:
+  enabled: false
+  cron_tasks:
+    - name: daily_reflection
+      schedule: "0 2 * * *"
+      prompt: "Run reflection cycle on last 50 episodes"
+      schedule_type: cron
+  watch_paths: []
+  self_schedule: true
+
+feedback:
+  enabled: true
+  good_score: 9.0
+  bad_score: 2.0
+
+adaptive:
+  enabled: true
+  min_samples: 20
+  threshold_method: mean_minus_std
+
+reflection:
+  enabled: false
+  last_n_episodes: 50
+  auto_apply: false

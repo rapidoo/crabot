@@ -1,0 +1,102 @@
+"""Reflection cycle — the agent analyzes its own performance and suggests improvements."""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from datetime import date
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from agent.agent import Agent
+    from agent.infra.metrics import MetricsCollector
+    from agent.memory.neo4j_client import MemoryClient
+
+logger = logging.getLogger(__name__)
+
+REFLECTION_PROMPT = """\
+You are performing a self-reflection on your recent performance as an AI agent.
+Analyze these metrics and suggest concrete improvements.
+
+{metrics_block}
+
+Based on this data, respond with JSON ONLY:
+{{
+  "insights": ["observation 1", "observation 2", ...],
+  "actions": [
+    {{"type": "adjust_threshold", "task_type": "...", "new_value": 6.0}},
+    {{"type": "escalate_model", "task_type": "...", "from": "e4b", "to": "26b"}},
+    {{"type": "create_skill", "name": "...", "tool_chain": ["search", "code"]}},
+    {{"type": "disable_tool", "tool": "...", "reason": "..."}}
+  ]
+}}
+
+Only suggest actions backed by data. Be specific."""
+
+_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+
+async def reflect(
+    agent: Agent,
+    metrics: MetricsCollector,
+    memory: MemoryClient | None = None,
+    last_n: int = 50,
+) -> dict[str, Any]:
+    """Run one reflection cycle.
+
+    Returns the parsed reflection result (insights + actions).
+    Persists the reflection as a meta-episode in Neo4j if available.
+    """
+    summary = metrics.summary(last_n=last_n)
+
+    if summary.get("total_episodes", 0) < 5:
+        logger.info("Reflection: not enough data (%d episodes), skipping",
+                     summary.get("total_episodes", 0))
+        return {"insights": ["Not enough data yet"], "actions": []}
+
+    metrics_block = "\n".join(f"- {k}: {v}" for k, v in summary.items())
+    prompt = REFLECTION_PROMPT.format(metrics_block=metrics_block)
+
+    try:
+        result = await agent.run(prompt)
+        raw = result.results[0].result.output if result.results else "{}"
+
+        # Parse JSON from potentially verbose output
+        text = raw.strip()
+        if not text.startswith("{"):
+            m = _JSON_RE.search(text)
+            if m:
+                text = m.group(0)
+        reflection = json.loads(text)
+
+    except (json.JSONDecodeError, IndexError, Exception) as exc:
+        logger.warning("Reflection parse failed: %s", exc)
+        reflection = {"insights": [f"Reflection failed: {exc}"], "actions": []}
+
+    # Log the reflection
+    logger.info(
+        "Reflection: %d insights, %d actions",
+        len(reflection.get("insights", [])),
+        len(reflection.get("actions", [])),
+    )
+    for insight in reflection.get("insights", []):
+        logger.info("  Insight: %s", insight)
+    for action in reflection.get("actions", []):
+        logger.info("  Action: %s", action)
+
+    # Persist as meta-episode
+    if memory and memory.available:
+        try:
+            await memory.persist_episode(
+                goal="self-reflection",
+                summary=f"Reflection {date.today()}: {len(reflection.get('insights', []))} insights, "
+                        f"{len(reflection.get('actions', []))} actions proposed",
+                score=8.0,
+                entities=[{"name": "self-reflection", "type": "concept",
+                           "description": f"Performance analysis {date.today()}"}],
+            )
+        except Exception as exc:
+            logger.warning("Reflection memory write failed: %s", exc)
+
+    return reflection
