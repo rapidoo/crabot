@@ -56,7 +56,7 @@ context:
   trace_in_context:    true
 
 telegram:
-  bot_token: ""                # Token BotFather — ou env TELEGRAM_BOT_TOKEN
+  bot_token: ""                # Loaded from .env TELEGRAM_BOT_TOKEN
   allowed_users: []            # User IDs autorisés (vide = tout le monde)
   max_message_length: 4000
 
