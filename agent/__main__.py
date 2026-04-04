@@ -62,7 +62,7 @@ def _run_oneshot() -> None:
     for sr in result.results:
         score_str = f"[{sr.score.final_score:.1f}/10]"
         print(f"\nStep {sr.step.id} {score_str} ({sr.step.tool}):")
-        print(sr.result.output[:1000])
+        print(sr.result.output)
     print("=" * 60)
 
 
