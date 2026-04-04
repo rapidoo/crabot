@@ -45,7 +45,7 @@ recovery:
 memory:
   neo4j_uri:        bolt://localhost:7687
   neo4j_user:       neo4j
-  neo4j_password:   guicho35carb
+  neo4j_password:   ""              # Loaded from .env NEO4J_PASSWORD
   context_k:        5
   write_threshold:  5.0
   entity_extraction: true

@@ -35,9 +35,15 @@ class MemoryClient:
         password: str | None = None,
     ):
         settings = get_settings()
+        import os
         self._uri = uri or settings.memory.neo4j_uri
         self._user = user or settings.memory.neo4j_user
-        self._password = password or settings.memory.neo4j_password
+        self._password = (
+            password
+            or os.environ.get("NEO4J_PASSWORD")
+            or settings.memory.neo4j_password
+            or "neo4j"
+        )
         self._context_k = settings.memory.context_k
         self._write_threshold = settings.memory.write_threshold
         self._driver: Any = None

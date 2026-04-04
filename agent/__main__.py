@@ -13,9 +13,12 @@ import sys
 
 from agent.agent import Agent
 from agent.config import get_settings
+from agent.env import load_dotenv
 
 
 def main() -> None:
+    load_dotenv()
+
     if len(sys.argv) < 2:
         print("Usage:")
         print("  python -m agent 'your prompt'   # One-shot")
