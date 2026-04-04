@@ -12,6 +12,8 @@ from typing import Callable, Awaitable
 from agent.config import get_settings, Settings
 from agent.models.ollama_client import OllamaClient, ChatResponse
 from agent.models.router import ModelRouter
+from agent.intelligence.loop_detection import LoopDetector
+from agent.personality.loader import Personality
 from agent.schemas import Plan, Step, StepResult
 
 from agent.tools.registry import get_tool, discover_tools
@@ -35,12 +37,15 @@ class Executor:
         client: OllamaClient | None = None,
         router: ModelRouter | None = None,
         settings: Settings | None = None,
+        personality: Personality | None = None,
     ):
         self._settings = settings or get_settings()
         self._client = client or OllamaClient(
             base_url=self._settings.models.ollama_base_url
         )
         self._router = router or ModelRouter(self._settings)
+        self._personality = personality
+        self._loop_detector = LoopDetector()
 
     async def execute(
         self,
@@ -59,6 +64,7 @@ class Executor:
         Returns:
             List of StepResult, one per step.
         """
+        self._loop_detector.reset()
         results: list[StepResult] = []
         context_trace: list[str] = []
         parallel_ids = set(plan.parallel)
@@ -124,6 +130,11 @@ class Executor:
         if step.tool == "none":
             return await self._execute_llm(step, context_trace)
 
+        # Loop detection
+        loop_msg = self._loop_detector.check(step.tool, step.input)
+        if loop_msg:
+            return StepResult(step_id=step.id, output=f"LOOP DETECTED: {loop_msg}")
+
         tool = get_tool(step.tool)
         if tool is None:
             logger.warning("Tool '%s' not available, falling back to LLM", step.tool)
@@ -142,17 +153,20 @@ class Executor:
         model = self._router.select("executor")
         sampling = self._router.sampling("executor")
 
+        system_parts = [
+            "You are a helpful assistant. Always write complete words "
+            "with proper accents and diacritics (é, è, ê, à, ç, ù, ô, etc.). "
+            "Never truncate words. Respond in the same language as the user."
+        ]
+        if self._personality and self._personality.soul:
+            system_parts.append(f"\nPersonality:\n{self._personality.soul}")
+        if self._personality and self._personality.user:
+            system_parts.append(f"\nUser profile:\n{self._personality.user}")
+
         resp: ChatResponse = await self._client.chat(
             model,
             [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a helpful assistant. Always write complete words "
-                        "with proper accents and diacritics (é, è, ê, à, ç, ù, ô, etc.). "
-                        "Never truncate words. Respond in the same language as the user."
-                    ),
-                },
+                {"role": "system", "content": "\n".join(system_parts)},
                 {"role": "user", "content": user_input},
             ],
             sampling=sampling,

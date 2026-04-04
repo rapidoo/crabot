@@ -69,7 +69,7 @@ logging:
   trace_file: ./logs/agent_trace.jsonl
 
 scheduler:
-  enabled: false
+  enabled: true
   cron_tasks:
     - name: daily_reflection
       schedule: "0 2 * * *"

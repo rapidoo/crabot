@@ -8,6 +8,7 @@ import os
 
 from agent.agent import Agent
 from agent.config import Settings
+from agent.personality.loader import Personality, load_personality
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ class TelegramBot:
             )
 
         self._agent = agent
+        self._identity = getattr(agent, '_personality', load_personality()).identity
         self._settings = settings
         self._semaphore = asyncio.Semaphore(settings.daemon.max_concurrent)
         self._max_len = settings.telegram.max_message_length
@@ -250,7 +252,9 @@ class TelegramBot:
     def _format_result(self, result) -> str:
         """Format an AgentResult into a readable Telegram message."""
         lines: list[str] = []
-        lines.append(f"Goal: {result.goal}\n")
+        name = self._identity.name
+        emoji = self._identity.emoji
+        lines.append(f"{emoji} {name} — {result.goal}\n")
 
         for sr in result.results:
             score = sr.score.final_score

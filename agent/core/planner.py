@@ -12,6 +12,7 @@ from agent.config import get_settings
 from agent.models.ollama_client import OllamaClient, ChatResponse
 from agent.models.router import ModelRouter
 from agent.infra.retry import with_retry, MaxRetriesExceeded
+from agent.personality.loader import Personality
 from agent.schemas import Plan
 from agent.tools.registry import list_tools_with_descriptions
 
@@ -102,12 +103,14 @@ class Planner:
         self,
         client: OllamaClient | None = None,
         router: ModelRouter | None = None,
+        personality: Personality | None = None,
     ):
         settings = get_settings()
         self._client = client or OllamaClient(
             base_url=settings.models.ollama_base_url
         )
         self._router = router or ModelRouter(settings)
+        self._personality = personality
 
     async def plan(self, user_input: str, context: str = "") -> Plan:
         """Generate a plan for the given user input."""
@@ -139,6 +142,9 @@ class Planner:
         self, user_input: str, context: str
     ) -> list[dict[str, str]]:
         system_prompt = _build_system_prompt()
+        # Inject AGENTS.md rules if available
+        if self._personality and self._personality.agents:
+            system_prompt += f"\n\nOperational rules:\n{self._personality.agents}"
         messages: list[dict[str, str]] = [
             {"role": "system", "content": system_prompt},
         ]

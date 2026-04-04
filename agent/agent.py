@@ -17,6 +17,8 @@ from agent.core.critic import Critic
 from agent.infra.state import StateManager
 from agent.memory.neo4j_client import MemoryClient
 from agent.memory.entity_extractor import EntityExtractor
+from agent.intelligence.skill_injector import get_skill_context
+from agent.personality.loader import load_personality, Personality
 from agent.schemas import AgentResult, ScoredResult, CriticScore, StepResult, Plan
 
 logger = logging.getLogger(__name__)
@@ -30,9 +32,10 @@ class Agent:
         client = OllamaClient(base_url=self._settings.models.ollama_base_url)
         router = ModelRouter(self._settings)
 
+        self._personality = load_personality()
         self._triage = Triage(client=client, router=router)
-        self._planner = Planner(client=client, router=router)
-        self._executor = Executor(client=client, router=router, settings=self._settings)
+        self._planner = Planner(client=client, router=router, personality=self._personality)
+        self._executor = Executor(client=client, router=router, settings=self._settings, personality=self._personality)
         self._critic = Critic(client=client, router=router, executor=self._executor)
         self._state = StateManager(self._settings.recovery.state_file)
         self._memory = MemoryClient()
@@ -100,15 +103,21 @@ class Agent:
             self._write_trace(user_input, agent_result, elapsed, simple=True)
             return agent_result
 
-        # Phase 0.5: Memory read — enrich context from past episodes
-        context = ""
+        # Phase 0.5: Memory read + skill injection
+        context_parts: list[str] = []
         if self._memory.available:
             logger.info("Phase 0.5: Memory read...")
             entities = await self._entity_extractor.extract(user_input)
             entity_names = [e["name"] for e in entities]
-            context = await self._memory.get_context(entity_names)
-            if context:
-                logger.info("Memory: injecting context (%d chars)", len(context))
+            episode_ctx = await self._memory.get_context(entity_names)
+            if episode_ctx:
+                context_parts.append(episode_ctx)
+                logger.info("Memory: injecting episode context (%d chars)", len(episode_ctx))
+            skill_ctx = await get_skill_context(self._memory)
+            if skill_ctx:
+                context_parts.append(skill_ctx)
+                logger.info("Memory: injecting %s", skill_ctx.split("\n")[0])
+        context = "\n\n".join(context_parts)
 
         # Phase 1: Plan
         logger.info("Phase 1: Planning...")
