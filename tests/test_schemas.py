@@ -14,7 +14,7 @@ class TestStep:
         assert s.tool == "code"
 
     def test_all_tool_types(self):
-        for tool in ("search", "code", "memory", "file", "none"):
+        for tool in ("search", "web_search", "code", "memory", "file", "none"):
             s = Step(id=1, tool=tool, input="x", expected_output="y")
             assert s.tool == tool
 

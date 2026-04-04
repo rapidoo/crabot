@@ -26,7 +26,7 @@ Output format (strict):
   "steps": [
     {
       "id": 1,
-      "tool": "search|code|memory|file|none",
+      "tool": "search|web_search|code|memory|file|none",
       "input": "exact input to pass to the tool or LLM",
       "expected_output": "what a correct result looks like"
     }
@@ -34,8 +34,16 @@ Output format (strict):
   "parallel": [1, 2]
 }
 
+Tools available:
+- search: search local project files for keywords
+- web_search: search the internet (DuckDuckGo) for current information
+- code: execute Python code in a sandbox
+- file: read or write local files (read:<path> or write:<path>:<content>)
+- memory: query the memory graph
+- none: use the LLM directly (no tool)
+
 Rules:
-- tool must be one of: search, code, memory, file, none
+- tool must be one of: search, web_search, code, memory, file, none
 - Each step must have a unique id starting from 1
 - parallel lists step ids that can run concurrently (optional, default empty)
 - Output ONLY the JSON object, no markdown fences, no commentary"""

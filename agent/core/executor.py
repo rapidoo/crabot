@@ -18,6 +18,7 @@ from agent.schemas import Plan, Step, StepResult
 import agent.tools.file_io  # noqa: F401
 import agent.tools.code_exec  # noqa: F401
 import agent.tools.search  # noqa: F401
+import agent.tools.web_search  # noqa: F401
 
 from agent.tools.registry import get_tool
 
