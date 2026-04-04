@@ -51,38 +51,35 @@ uniquement pour les passes Critic à fort enjeu.
 ### 2.1 Vue d'ensemble
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                         USER INPUT                             │
-└──────────────────────────────┬─────────────────────────────────┘
-                               │
-                        ↓  [MEMORY NODE]  ↓
-                   enrichissement depuis Neo4j
-                               │
-          ┌────────────────────┴───────────────────┐
-          │         PHASE 1 : PLANNER              │
-          │  • Analyse de la tâche                 │
-          │  • Sortie : JSON structuré             │
-          │  • Steps + outils requis               │
-          └────────────────────┬───────────────────┘
-                               │ plan.json
-          ┌────────────────────┴───────────────────┐
-          │         PHASE 2 : EXECUTOR             │
-          │  • Execution séquentielle / //         │
-          │  • Tool calls natifs Gemma 4           │
-          │  • Skeleton-of-Thought si long         │
-          └────────────────────┬───────────────────┘
-                               │ results[]
-          ┌────────────────────┴───────────────────┐
-          │         PHASE 3 : CRITIC               │
-          │  • Score 0-10 par step                 │
-          │  • Retry si score < seuil              │
-          │  • Mise à jour mémoire Neo4j           │
-          └────────────────────┬───────────────────┘
-                               │
-                           OUTPUT FINAL
-                               │
-                        [MEMORY WRITE]
-                    persistance Neo4j
+  Telegram ──►  ┌──────────────────────────────────────────────────┐
+  Cron     ──►  │                  EVENT LOOP                      │
+  Watch    ──►  │                                                  │
+  Self     ──►  │   ┌─────────┐    ┌──────────┐    ┌───────────┐ │
+                │   │ TRIAGE  │───►│ PLANNER  │───►│ EXECUTOR  │ │
+                │   │  (E4B)  │    │  (26B)   │    │  (26B)    │ │
+                │   └────┬────┘    └──────────┘    └─────┬─────┘ │
+                │        │              ▲                 │       │
+                │   simple│         Skills Neo4j          │       │
+                │        ▼              ▲                 ▼       │
+                │   E4B direct    ┌─────┴──────┐   ┌──────────┐ │
+                │                 │   MEMORY   │◄──│  CRITIC  │ │
+                │                 │   Neo4j    │   │  (31B)   │ │
+                │                 └─────┬──────┘   └──────────┘ │
+                │                       │                        │
+                │              ┌────────┴────────┐               │
+                │              │   REFLECTION    │  (cron daily) │
+                │              │  ajuste seuils  │               │
+                │              │  crée skills    │               │
+                │              │  évolue routing │               │
+                │              └─────────────────┘               │
+                └──────────────────────────────────────────────────┘
+                                       │
+                                   OUTPUT
+                                       │
+                              ┌────────┴────────┐
+                              │    FEEDBACK     │
+                              │  /good  /bad    │
+                              └─────────────────┘
 ```
 
 ### 2.2 Détail des phases
@@ -421,27 +418,38 @@ MERGE (ep)-[:FOLLOWS]->(prev)
 ```
 agent/
   ├── core/
-  │   ├── planner.py        # LLM call + JSON schema validation (pydantic)
-  │   ├── executor.py       # Tool dispatch + parallel execution (asyncio)
-  │   └── critic.py         # Scoring + retry logic
+  │   ├── planner.py          # LLM call + JSON schema validation (pydantic)
+  │   ├── executor.py         # Tool dispatch + parallel execution (asyncio)
+  │   ├── critic.py           # Scoring + retry + seuils adaptatifs
+  │   ├── triage.py           # Classification rapide (E4B)
+  │   ├── scheduler.py        # [P0] Cron interne + file watch + self-scheduling
+  │   └── reflection.py       # [P1] Cycle méta-cognition quotidien
   ├── memory/
-  │   ├── neo4j_client.py   # Read/write graph, connection pool
-  │   ├── schemas.cypher    # Contraintes + index (setup initial)
-  │   └── entity_extractor.py  # Extraction entités depuis input/output
+  │   ├── neo4j_client.py     # Read/write graph (Episode, Entity, Skill, Goal)
+  │   ├── schemas.cypher      # Contraintes + index (setup initial)
+  │   └── entity_extractor.py # Extraction entités depuis input/output
   ├── tools/
-  │   ├── registry.py       # Tool registry + dispatch
-  │   ├── search.py         # Web / RAG local (Ollama embeddings)
-  │   ├── code_exec.py      # Sandbox Python (subprocess isolé)
-  │   └── file_io.py        # Lecture/écriture fichiers
+  │   ├── registry.py         # Tool registry + dispatch (factory pattern)
+  │   ├── base.py             # Interface Tool abstraite
+  │   ├── search.py           # Recherche fichiers locale
+  │   ├── code_exec.py        # Sandbox Python (subprocess isolé)
+  │   └── file_io.py          # Lecture/écriture fichiers
   ├── models/
-  │   ├── ollama_client.py  # Appels directs Ollama /api/chat (pas de SDK tiers)
-  │   └── router.py         # ModelRouter : E4B / 26B / 31B selon heuristique
+  │   ├── ollama_client.py    # Appels directs Ollama /api/chat (pas de SDK tiers)
+  │   └── router.py           # ModelRouter : E4B / 26B / 31B + [P1] learning
+  ├── interfaces/
+  │   └── telegram_bot.py     # Bot Telegram + [P0] feedback /good /bad
   ├── infra/
-  │   ├── state.py          # Cursor recovery + persistence atomique
-  │   └── retry.py          # Retry exponentiel sur erreurs Ollama
-  ├── agent.py              # Orchestrateur principal
-  ├── config.yaml           # Tous les paramètres configurables
-  └── AGENT_PATTERN.md      # Ce document
+  │   ├── state.py            # Cursor recovery + persistence atomique
+  │   ├── retry.py            # Retry exponentiel sur erreurs Ollama
+  │   ├── metrics.py          # [P0] Agrégation traces JSONL
+  │   └── prompts.py          # [P2] Versionning + A/B test des prompts
+  ├── agent.py                # Orchestrateur principal
+  ├── daemon.py               # Event loop persistant
+  ├── schemas.py              # Pydantic models (Plan, Step, Score...)
+  ├── config.py               # Chargement + validation config
+  ├── config.yaml             # Tous les paramètres configurables
+  └── env.py                  # Variables d'environnement
 ```
 
 ---
@@ -494,6 +502,32 @@ recovery:
   persist_cursor:   true           # Sauvegarder l'avancement step par step
   state_file:       ./state/agent_state.json
   atomic_write:     true           # write .tmp + rename
+
+# ── Autonomie (section 9) ──
+
+scheduler:
+  enabled:          true
+  cron_tasks:                      # Tâches récurrentes
+    - name: daily_reflection
+      schedule: "0 2 * * *"       # 2h du matin
+      prompt: "Run reflection cycle on last 50 episodes"
+  watch_paths: []                  # File watcher (ex: ./repos/urbahive)
+  self_schedule:    true           # L'agent peut planifier ses propres actions
+
+feedback:
+  enabled:          true
+  good_score:       9.0            # Score override sur /good
+  bad_score:        2.0            # Score override sur /bad
+
+adaptive:
+  enabled:          true
+  min_samples:      20             # Minimum d'épisodes avant calibration
+  threshold_method: "mean_minus_std"  # mean - 1*std
+
+reflection:
+  enabled:          true
+  last_n_episodes:  50             # Fenêtre d'analyse
+  auto_apply:       false          # true = appliquer les actions automatiquement
 
 memory:
   neo4j_uri:        bolt://localhost:7687
@@ -614,21 +648,414 @@ Avantage clé : aucun code client n'est envoyé à une API externe.
 
 ---
 
-## 9. Étapes suivantes
+## 9. Autonomie et Évolution
 
-- [ ] Benchmark local : `gemma4:26b` et `gemma4:31b` sur M4 Pro — tokens/s, RAM réelle, temps de swap
-- [ ] Valider le triage E4B : classifier 50 inputs variés, mesurer précision et latence
-- [ ] Implémenter `ollama_client.py` : appels directs `/api/chat` avec tools + thinking toggle
-- [ ] Implémenter `router.py` : ModelRouter avec heuristiques de sélection
-- [ ] Implémenter `planner.py` avec validation pydantic stricte du plan JSON
-- [ ] Implémenter `critic.py` avec boucle retry — comparer 26B vs 31B comme Critic
-- [ ] Implémenter `state.py` : cursor recovery + persistence atomique
-- [ ] Connecter Neo4j : tester enrichissement contexte sur un use case réel
-- [ ] Benchmark Critic : calibrer le seuil 6.5 sur 20 tâches échantillon (26B et 31B)
-- [ ] Tester vision : extraction document avec budget tokens variable (280 vs 1120)
-- [ ] Choisir le use case pilote : **code review UrbaHive** (recommandé, périmètre borné)
+L'agent actuel est **réactif** : il attend un input, exécute, et meurt. Pour devenir autonome
+et évolutif, trois couches manquent — chacune construite sur la précédente.
+
+### 9.1 Niveau 1 — L'agent persiste et agit seul
+
+**Event loop persistant + triggers**
+
+Passer de `run(input) → output` à un processus long-lived avec file d'événements.
+`daemon.py` lance déjà Telegram en polling. Ajouter un scheduler interne.
+
+```python
+# agent/core/scheduler.py
+class AgentScheduler:
+    """Triggers proactifs — cron, file watch, self-scheduled."""
+
+    def __init__(self, agent: Agent, queue: asyncio.Queue):
+        self.agent = agent
+        self.queue = queue
+        self.tasks: list[ScheduledTask] = []
+
+    async def start(self):
+        """Boucle principale — poll les triggers, dispatch vers l'agent."""
+        asyncio.create_task(self._cron_loop())
+        asyncio.create_task(self._watch_loop())
+        while True:
+            event = await self.queue.get()
+            await self.agent.run(event.prompt, source=event.source)
+
+    async def _cron_loop(self):
+        while True:
+            now = datetime.now()
+            for task in self.tasks:
+                if task.is_due(now):
+                    await self.queue.put(Event(prompt=task.prompt, source="cron"))
+                    task.advance()
+            await asyncio.sleep(60)
+
+    async def _watch_loop(self):
+        """File watcher — réagir à un git push, nouveau fichier, diff."""
+        # watchfiles ou inotify
+        pass
+
+    def schedule_self(self, prompt: str, delay: timedelta):
+        """L'agent planifie sa propre prochaine action."""
+        self.tasks.append(ScheduledTask(
+            prompt=prompt,
+            next_run=datetime.now() + delay,
+            schedule_type="once",
+        ))
+```
+
+**Feedback utilisateur**
+
+Signaux explicites depuis Telegram pour calibrer le Critic :
+
+```python
+# Dans telegram_bot.py — nouveaux handlers
+async def handle_good(update, context):
+    """Utilisateur valide le dernier résultat → score_override = 9.0"""
+    last_episode = agent.last_episode_id
+    await memory.update_score(last_episode, override=9.0)
+    await update.message.reply_text("Noté. Je m'en souviendrai.")
+
+async def handle_bad(update, context):
+    """Utilisateur rejette → score_override = 2.0 + raison optionnelle"""
+    last_episode = agent.last_episode_id
+    reason = " ".join(context.args) if context.args else None
+    await memory.update_score(last_episode, override=2.0, reason=reason)
+    await update.message.reply_text("Compris. Je ferai mieux.")
+```
+
+**Seuils adaptatifs**
+
+Le seuil Critic 6.5 est arbitraire. Le calibrer sur les données réelles :
+
+```python
+# Dans critic.py — remplacer le seuil fixe
+class AdaptiveThreshold:
+    """Seuil Critic ajusté sur la distribution des scores passés."""
+
+    def __init__(self, default: float = 6.5, min_samples: int = 20):
+        self.default = default
+        self.min_samples = min_samples
+
+    async def get(self, task_type: str = "default") -> float:
+        scores = await metrics.get_scores(task_type, limit=50)
+        if len(scores) < self.min_samples:
+            return self.default
+        mean = sum(scores) / len(scores)
+        std = (sum((s - mean)**2 for s in scores) / len(scores)) ** 0.5
+        # Rejeter le quartile bas — adapté au niveau réel du modèle
+        return max(mean - std, 4.0)
+```
+
+**Métriques et analyse des traces**
+
+`agent.py:_write_trace()` écrit déjà des JSONL. Ajouter l'agrégation :
+
+```python
+# agent/infra/metrics.py
+class MetricsCollector:
+    """Agrège les traces JSONL en stats actionnables."""
+
+    def __init__(self, trace_file: str):
+        self.trace_file = trace_file
+
+    def summary(self, last_n: int = 100) -> dict:
+        traces = self._load_last(last_n)
+        return {
+            "avg_score": mean(t["scores"] for t in traces),
+            "by_task_type": self._group_by(traces, "path"),
+            "by_model": self._group_by(traces, "model"),
+            "tool_success_rate": self._tool_stats(traces),
+            "avg_latency_s": mean(t["elapsed_s"] for t in traces),
+            "retry_rate": sum(1 for t in traces if t.get("retries")) / len(traces),
+        }
+
+    def get_scores(self, task_type: str, limit: int) -> list[float]:
+        """Pour AdaptiveThreshold."""
+        return [t["scores"] for t in self._load_last(limit)
+                if t.get("path") == task_type or task_type == "default"]
+```
 
 ---
 
-*Document vivant — mettre à jour `config.yaml` et les seuils Critic au fur et à mesure
-des calibrations sur cas réels.*
+### 9.2 Niveau 2 — L'agent s'améliore avec l'usage
+
+**Skill acquisition**
+
+Le schéma Neo4j définit déjà des noeuds `Skill` mais rien ne les peuple.
+Quand une tool chain réussit (score > 8), la sauvegarder comme compétence réutilisable :
+
+```python
+# Dans agent.py, après _persist_memory()
+async def _extract_skills(self, plan: Plan, scored: list[ScoredResult]):
+    avg = mean(s.score.final_score for s in scored)
+    if avg < 8.0:
+        return
+    tool_chain = [s.step.tool for s in scored if s.step.tool != "none"]
+    if len(tool_chain) < 2:
+        return  # pas de chaîne intéressante
+    skill_name = f"{plan.goal[:50]}_{hash(tuple(tool_chain)) % 10000}"
+    await self.memory.persist_skill(skill_name, tool_chain, avg)
+```
+
+```cypher
+// Neo4j — persistance du Skill
+MERGE (s:Skill {name: $name})
+SET s.tool_chain = $tool_chain,
+    s.success_rate = CASE WHEN s.usage_count IS NULL
+      THEN $score
+      ELSE (s.success_rate * s.usage_count + $score) / (s.usage_count + 1)
+    END,
+    s.usage_count = coalesce(s.usage_count, 0) + 1,
+    s.last_used = datetime()
+
+// Injecter les Skills dans le Planner
+MATCH (s:Skill) WHERE s.success_rate > 7.0
+RETURN s.name, s.tool_chain, s.success_rate
+ORDER BY s.success_rate DESC LIMIT 5
+```
+
+**Router learning**
+
+Remplacer les heuristiques statiques par une sélection data-driven :
+
+```python
+# agent/models/router.py — enrichissement
+class AdaptiveRouter(ModelRouter):
+    """Sélection du modèle basée sur les performances observées."""
+
+    async def select(self, role: str, task_type: str, high_stakes: bool = False) -> str:
+        if high_stakes:
+            return self.MODELS["critic"]
+
+        # Consulter la matrice de performance
+        stats = await metrics.model_stats(task_type)
+        if stats and stats.best_model:
+            return stats.best_model
+
+        # Fallback sur heuristiques statiques
+        return super().select(role, high_stakes)
+```
+
+**Reflection cycle (méta-cognition)**
+
+Tâche cron quotidienne — l'agent s'analyse lui-même :
+
+```python
+# agent/core/reflection.py
+async def reflect(agent: Agent, metrics: MetricsCollector, memory: Neo4jClient):
+    """Cycle de réflexion — l'agent analyse ses N derniers épisodes."""
+    summary = metrics.summary(last_n=50)
+
+    prompt = f"""Analyze these agent performance metrics and suggest improvements:
+
+Avg score: {summary['avg_score']:.1f}
+Retry rate: {summary['retry_rate']:.0%}
+Tool success rates: {summary['tool_success_rate']}
+Score by task type: {summary['by_task_type']}
+Score by model: {summary['by_model']}
+
+Respond with JSON:
+{{
+  "insights": ["..."],
+  "actions": [
+    {{"type": "adjust_threshold", "task_type": "...", "new_value": N}},
+    {{"type": "disable_tool", "tool": "...", "reason": "..."}},
+    {{"type": "escalate_model", "task_type": "...", "from": "e4b", "to": "26b"}}
+  ]
+}}"""
+
+    result = await agent.run(prompt, source="reflection")
+    # Persister comme méta-épisode
+    await memory.persist_episode(
+        episode_id=f"reflection_{date.today()}",
+        summary=result.goal,
+        score=8.0,
+        goal="self-improvement",
+    )
+    return result
+```
+
+**Goal graph (buts persistants)**
+
+Les goals actuels meurent avec l'épisode. Les rendre persistants :
+
+```cypher
+// Nouveau noeud Goal dans Neo4j
+(:Goal {id, description, status: "active|done|blocked", priority: 1-5, created_at})
+  -[:DECOMPOSED_INTO]-> (:Goal)       // sub-goals
+  -[:ACHIEVED_BY]->     (:Episode)    // épisodes qui contribuent
+  -[:BLOCKED_BY]->      (:Goal)       // dépendances
+
+// L'agent reprend ses goals au démarrage
+MATCH (g:Goal {status: "active"})
+RETURN g.description, g.priority
+ORDER BY g.priority ASC, g.created_at ASC
+```
+
+```python
+# Au démarrage de l'agent
+async def resume_goals(self):
+    """Reprendre les buts actifs depuis Neo4j."""
+    goals = await self.memory.get_active_goals()
+    for goal in goals:
+        await self.scheduler.schedule_self(
+            prompt=f"Continue working on goal: {goal.description}",
+            delay=timedelta(minutes=5),
+        )
+```
+
+---
+
+### 9.3 Niveau 3 — L'agent s'étend lui-même
+
+**Tool synthesis**
+
+L'agent détecte un besoin non couvert, génère un tool, le teste, et l'enregistre :
+
+```python
+# Séquence tool synthesis
+async def synthesize_tool(agent: Agent, need: str) -> bool:
+    # 1. Planner génère le code du tool
+    plan = await agent.planner.plan(
+        f"Write a Python tool that: {need}. "
+        f"Follow the Tool interface: run(input: str) -> str. "
+        f"Include error handling and a 30s timeout."
+    )
+
+    # 2. Executor génère le code
+    result = await agent.executor.execute(plan)
+    code = result[0].output
+
+    # 3. Critic valide (31B Dense, thinking on)
+    score = await agent.critic.evaluate_single(
+        code, expected="safe, correct, follows Tool interface",
+        high_stakes=True
+    )
+    if score.final_score < 8.0:
+        return False  # trop risqué
+
+    # 4. Test dans le sandbox
+    test_result = await sandbox_exec(code + "\n\nprint(tool.run('test'))")
+    if test_result.code != 0:
+        return False
+
+    # 5. Écrire et enregistrer
+    tool_name = f"synth_{hash(need) % 10000}"
+    path = f"agent/tools/{tool_name}.py"
+    async with aiofiles.open(path, "w") as f:
+        await f.write(code)
+    register_tool(tool_name, lambda: load_module(path))
+    return True
+```
+
+**Persona evolution**
+
+Le system prompt racine évolue guidé par les cycles de reflection :
+
+```python
+# Versionning des prompts
+class PromptRegistry:
+    def __init__(self, storage_dir: str = "./prompts"):
+        self.storage_dir = storage_dir
+
+    def current(self, role: str) -> str:
+        versions = sorted(glob(f"{self.storage_dir}/{role}_v*.txt"))
+        return Path(versions[-1]).read_text() if versions else DEFAULT_PROMPTS[role]
+
+    def evolve(self, role: str, new_prompt: str, reason: str):
+        version = len(glob(f"{self.storage_dir}/{role}_v*.txt")) + 1
+        path = f"{self.storage_dir}/{role}_v{version:03d}.txt"
+        Path(path).write_text(new_prompt)
+        # Log l'évolution
+        log = {"version": version, "reason": reason, "timestamp": datetime.now().isoformat()}
+        Path(f"{path}.meta.json").write_text(json.dumps(log))
+
+    def rollback(self, role: str):
+        versions = sorted(glob(f"{self.storage_dir}/{role}_v*.txt"))
+        if len(versions) > 1:
+            Path(versions[-1]).unlink()  # supprimer la dernière version
+```
+
+---
+
+### 9.4 Vue d'ensemble — diagramme d'évolution
+
+```
+                    ┌─────────────────────────────────────────────────┐
+                    │              BOUCLE DE VIE                      │
+                    │                                                 │
+  Telegram ──►     │  ┌─────────┐     ┌──────────┐     ┌─────────┐ │
+  Cron     ──►  Queue │ TRIAGE  │────►│ PLAN     │────►│ EXECUTE │ │
+  Watch    ──►     │  └─────────┘     └──────────┘     └────┬────┘ │
+  Self     ──►     │       │               ▲                │      │
+                    │       │          Skills Neo4j          │      │
+                    │       │               ▲                ▼      │
+                    │  ┌────┴────┐     ┌────┴─────┐   ┌─────────┐ │
+                    │  │ FEEDBACK│────►│ MEMORY   │◄──│ CRITIC  │ │
+                    │  │ /good   │     │ Neo4j    │   └────┬────┘ │
+                    │  │ /bad    │     └──────────┘        │      │
+                    │  └─────────┘          ▲              │      │
+                    │                       │              │      │
+                    │              ┌────────┴────────┐     │      │
+                    │              │   REFLECTION    │◄────┘      │
+                    │              │ (cron daily)    │             │
+                    │              │ • ajuste seuils │             │
+                    │              │ • crée skills   │             │
+                    │              │ • évolue prompts│             │
+                    │              │ • route modèles │             │
+                    │              └─────────────────┘             │
+                    └─────────────────────────────────────────────────┘
+```
+
+---
+
+### 9.5 Matrice de priorité
+
+| Feature | Impact | Complexité | Fichier à modifier | Priorité |
+|---------|--------|------------|-------------------|----------|
+| Métriques + analyse traces | Fondamental | Faible | `agent.py` + nouveau `infra/metrics.py` | **P0** |
+| Feedback /good /bad | Fort | Faible | `telegram_bot.py` | **P0** |
+| Seuils adaptatifs | Fort | Faible | `critic.py` | **P0** |
+| Triggers cron/watch | Fort | Moyenne | `daemon.py` + nouveau `core/scheduler.py` | **P0** |
+| Skill acquisition | Fort | Moyenne | `neo4j_client.py` + `agent.py` | **P1** |
+| Router learning | Moyen | Moyenne | `router.py` | **P1** |
+| Reflection cycle | Fort | Moyenne | Nouveau `core/reflection.py` | **P1** |
+| Goal graph | Fort | Moyenne | `neo4j_client.py` + `state.py` | **P1** |
+| Prompt tuning | Fort | Haute | Nouveau `infra/prompts.py` | **P2** |
+| Tool synthesis | Très fort | Haute | `tools/registry.py` + `code_exec.py` | **P2** |
+| Persona evolution | Moyen | Haute | Dépend de reflection + prompt tuning | **P3** |
+
+---
+
+## 10. Roadmap
+
+### Phase 1 — MVP (fait)
+- [x] Boucle Plan → Execute → Critique
+- [x] Multi-model routing (E4B / 26B / 31B)
+- [x] Thinking mode natif
+- [x] Mémoire Neo4j (épisodes + entités)
+- [x] Tool registry + 3 tools (code, search, file)
+- [x] Cursor recovery
+- [x] Interface Telegram
+- [x] Tests unitaires complets
+
+### Phase 2 — Fondations autonomie (P0)
+- [ ] `infra/metrics.py` : agrégation des traces JSONL
+- [ ] Feedback Telegram : `/good` `/bad` avec score override
+- [ ] `AdaptiveThreshold` dans critic.py
+- [ ] `core/scheduler.py` : cron interne + self-scheduling
+- [ ] Benchmark : gemma4:26b et 31b sur M4 Pro — tokens/s, RAM, temps de swap
+
+### Phase 3 — Évolution (P1)
+- [ ] Skill acquisition : peupler les noeuds Skill Neo4j
+- [ ] Router learning : matrice modèle × type_tâche
+- [ ] `core/reflection.py` : cycle de réflexion quotidien
+- [ ] Goal graph Neo4j : buts persistants + reprise au démarrage
+
+### Phase 4 — Auto-extension (P2-P3)
+- [ ] Tool synthesis : génération, test, enregistrement dynamique
+- [ ] Prompt versionning + A/B test
+- [ ] Persona evolution guidée par reflection
+- [ ] Use case pilote : **code review UrbaHive** (périmètre borné, haute valeur)
+
+---
+
+*Document vivant — enrichir au fur et à mesure des calibrations sur cas réels.*
