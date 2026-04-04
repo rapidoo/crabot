@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 class Step(BaseModel):
     id: int
-    tool: Literal["search", "web_search", "code", "memory", "file", "none"]
+    tool: str  # Dynamic — validated against registry at runtime, not compile time
     input: str
     expected_output: str
 

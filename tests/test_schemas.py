@@ -18,9 +18,10 @@ class TestStep:
             s = Step(id=1, tool=tool, input="x", expected_output="y")
             assert s.tool == tool
 
-    def test_invalid_tool(self):
-        with pytest.raises(ValidationError):
-            Step(id=1, tool="invalid", input="x", expected_output="y")
+    def test_custom_tool_name_accepted(self):
+        # tool is now a free string to support dynamically created tools
+        s = Step(id=1, tool="my_custom_tool", input="x", expected_output="y")
+        assert s.tool == "my_custom_tool"
 
     def test_missing_field(self):
         with pytest.raises(ValidationError):

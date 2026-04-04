@@ -13,37 +13,34 @@ from agent.models.ollama_client import OllamaClient, ChatResponse
 from agent.models.router import ModelRouter
 from agent.infra.retry import with_retry, MaxRetriesExceeded
 from agent.schemas import Plan
+from agent.tools.registry import list_tools_with_descriptions
 
 logger = logging.getLogger(__name__)
 
-PLANNER_SYSTEM_PROMPT = """\
+_PLANNER_SYSTEM_TEMPLATE = """\
 You are a task planner. Given a user request and memory context, produce
 a JSON plan ONLY. No prose. No explanation.
 
 Output format (strict):
-{
+{{
   "goal": "one sentence description of the overall goal",
   "steps": [
-    {
+    {{
       "id": 1,
-      "tool": "search|web_search|code|memory|file|none",
+      "tool": "<tool_name>",
       "input": "exact input to pass to the tool or LLM",
       "expected_output": "what a correct result looks like"
-    }
+    }}
   ],
   "parallel": [1, 2]
-}
+}}
 
 Tools available:
-- search: search local project files for keywords
-- web_search: search the internet (DuckDuckGo) for current information
-- code: execute Python code in a sandbox
-- file: read or write local files (read:<path> or write:<path>:<content>)
-- memory: query the memory graph
+{tools_section}
 - none: use the LLM directly (no tool)
 
 Rules:
-- tool must be one of: search, web_search, code, memory, file, none
+- tool must be one of: {tool_names}, none
 - Each step must have a unique id starting from 1
 - parallel lists step ids that can run concurrently (optional, default empty)
 - Output ONLY the JSON object, no markdown fences, no commentary"""
@@ -51,6 +48,23 @@ Rules:
 # Regex to extract JSON from markdown-fenced or prose-wrapped responses
 _JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?```", re.DOTALL)
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def _build_system_prompt() -> str:
+    """Build the planner system prompt with dynamically discovered tools."""
+    tools = list_tools_with_descriptions()
+    if tools:
+        tools_section = "\n".join(
+            f"- {t['name']}: {t['description']}" for t in tools
+        )
+        tool_names = ", ".join(t["name"] for t in tools)
+    else:
+        tools_section = "- (no tools registered)"
+        tool_names = ""
+    return _PLANNER_SYSTEM_TEMPLATE.format(
+        tools_section=tools_section,
+        tool_names=tool_names,
+    )
 
 
 def _extract_json(text: str) -> str:
@@ -96,18 +110,7 @@ class Planner:
         self._router = router or ModelRouter(settings)
 
     async def plan(self, user_input: str, context: str = "") -> Plan:
-        """Generate a plan for the given user input.
-
-        Args:
-            user_input: The user's request.
-            context: Optional memory context to inject into the prompt.
-
-        Returns:
-            A validated Plan object.
-
-        Raises:
-            MaxRetriesExceeded: If the LLM fails to produce valid JSON after retries.
-        """
+        """Generate a plan for the given user input."""
         return await with_retry(
             self._attempt_plan,
             user_input,
@@ -135,8 +138,9 @@ class Planner:
     def _build_messages(
         self, user_input: str, context: str
     ) -> list[dict[str, str]]:
+        system_prompt = _build_system_prompt()
         messages: list[dict[str, str]] = [
-            {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
         ]
         if context:
             messages.append(

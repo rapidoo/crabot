@@ -1,10 +1,15 @@
-"""Tool registry — factory pattern for dynamic tool registration."""
+"""Tool registry — factory pattern with auto-discovery."""
 
 from __future__ import annotations
 
+import importlib
+import logging
+from pathlib import Path
 from typing import Callable
 
 from agent.tools.base import Tool
+
+logger = logging.getLogger(__name__)
 
 _registry: dict[str, Callable[[], Tool | None]] = {}
 
@@ -27,6 +32,45 @@ def list_tools() -> list[str]:
     return list(_registry.keys())
 
 
+def list_tools_with_descriptions() -> list[dict[str, str]]:
+    """Return tool names and descriptions for the planner prompt."""
+    result: list[dict[str, str]] = []
+    for name in _registry:
+        tool = get_tool(name)
+        if tool is not None:
+            result.append({"name": name, "description": tool.description})
+        else:
+            result.append({"name": name, "description": "(unavailable)"})
+    return result
+
+
 def clear_registry() -> None:
     """Clear all registered tools (for testing)."""
     _registry.clear()
+
+
+def discover_tools() -> None:
+    """Auto-discover and import all tool modules in agent/tools/.
+
+    Scans for .py files in the tools directory (and custom_tools/ if it exists).
+    Each module is expected to call register_tool() at import time.
+    """
+    tools_dir = Path(__file__).parent
+    _import_tools_from(tools_dir, "agent.tools")
+
+    # Also scan custom_tools/ for user-generated tools
+    custom_dir = tools_dir / "custom"
+    if custom_dir.exists():
+        _import_tools_from(custom_dir, "agent.tools.custom")
+
+
+def _import_tools_from(directory: Path, package_prefix: str) -> None:
+    """Import all .py modules from a directory."""
+    for py_file in sorted(directory.glob("*.py")):
+        if py_file.name.startswith("_") or py_file.name in ("base.py", "registry.py"):
+            continue
+        module_name = f"{package_prefix}.{py_file.stem}"
+        try:
+            importlib.import_module(module_name)
+        except Exception as exc:
+            logger.warning("Failed to load tool module %s: %s", module_name, exc)

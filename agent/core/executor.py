@@ -14,13 +14,10 @@ from agent.models.ollama_client import OllamaClient, ChatResponse
 from agent.models.router import ModelRouter
 from agent.schemas import Plan, Step, StepResult
 
-# Import tools to trigger self-registration
-import agent.tools.file_io  # noqa: F401
-import agent.tools.code_exec  # noqa: F401
-import agent.tools.search  # noqa: F401
-import agent.tools.web_search  # noqa: F401
+from agent.tools.registry import get_tool, discover_tools
 
-from agent.tools.registry import get_tool
+# Auto-discover all tools (scans agent/tools/ and agent/tools/custom/)
+discover_tools()
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +144,17 @@ class Executor:
 
         resp: ChatResponse = await self._client.chat(
             model,
-            [{"role": "user", "content": user_input}],
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a helpful assistant. Always write complete words "
+                        "with proper accents and diacritics (é, è, ê, à, ç, ù, ô, etc.). "
+                        "Never truncate words. Respond in the same language as the user."
+                    ),
+                },
+                {"role": "user", "content": user_input},
+            ],
             sampling=sampling,
         )
         return StepResult(step_id=0, output=resp.content, tokens_used=resp.eval_count)

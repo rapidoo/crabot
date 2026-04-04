@@ -35,6 +35,25 @@ def _strip_thinking(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# UTF-8 cleanup
+# ---------------------------------------------------------------------------
+
+def _fix_utf8(text: str) -> str:
+    """Fix broken UTF-8 sequences from Ollama token generation.
+
+    Gemma 4 sometimes emits partial multi-byte UTF-8 characters (e.g. the
+    first byte of 'é' without the continuation byte), producing replacement
+    characters or silently dropping letters. This re-encodes and decodes to
+    remove any invalid sequences, then strips common artifacts.
+    """
+    # Round-trip through bytes to discard broken sequences
+    clean = text.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace")
+    # Remove replacement characters left behind
+    clean = clean.replace("\ufffd", "")
+    return clean
+
+
+# ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
 
@@ -101,6 +120,7 @@ class OllamaClient:
         content = data.get("message", {}).get("content", "")
         if thinking:
             content = _strip_thinking(content)
+        content = _fix_utf8(content)
 
         return ChatResponse(
             content=content,
