@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 
 from agent.agent import Agent
@@ -20,6 +21,7 @@ from agent.personality.loader import load_personality
 
 def main() -> None:
     load_dotenv()
+    _parse_model_flag()
 
     if len(sys.argv) < 2:
         _run_repl()
@@ -31,14 +33,28 @@ def main() -> None:
         _run_oneshot()
 
 
+def _parse_model_flag() -> None:
+    """Extract --model <name> from sys.argv and set MODEL_NAME env var."""
+    if "--model" in sys.argv:
+        idx = sys.argv.index("--model")
+        if idx + 1 < len(sys.argv):
+            os.environ["MODEL_NAME"] = sys.argv[idx + 1].upper()
+            del sys.argv[idx:idx + 2]
+        else:
+            print("Error: --model requires a value (mistral or gemma4)")
+            sys.exit(1)
+
+
 def _print_help() -> None:
     identity = load_personality().identity
     print(f"{identity.emoji} {identity.name} — Agent IA local")
     print()
     print("Usage:")
-    print("  python -m agent                  Interactive (REPL)")
-    print("  python -m agent 'prompt'         One-shot")
-    print("  python -m agent --daemon         Telegram bot (24/7)")
+    print("  python -m agent                          Interactive (REPL)")
+    print("  python -m agent 'prompt'                 One-shot")
+    print("  python -m agent --daemon                 Telegram bot (24/7)")
+    print("  python -m agent --model mistral           Use Mistral models")
+    print("  python -m agent --model gemma4            Use Gemma4 models (default)")
     print()
     print("REPL commands:")
     print("  /tools       List available tools")

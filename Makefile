@@ -44,16 +44,17 @@ setup-neo4j:
 stop-neo4j:
 	docker stop nano-neo4j && docker rm nano-neo4j
 
-# Run agent
+# Run agent (MODEL=mistral or MODEL=gemma4)
+MODEL ?= gemma4
 chat:
-	.venv/bin/python -m agent
+	MODEL_NAME=$(MODEL) .venv/bin/python -m agent
 
 run:
-	.venv/bin/python -m agent $(PROMPT)
+	MODEL_NAME=$(MODEL) .venv/bin/python -m agent $(PROMPT)
 
 # Daemon (foreground — Ctrl+C to stop)
 daemon:
-	.venv/bin/python -m agent --daemon
+	MODEL_NAME=$(MODEL) .venv/bin/python -m agent --daemon
 
 # macOS service (launchd)
 service-install:
