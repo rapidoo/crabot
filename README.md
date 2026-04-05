@@ -6,7 +6,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![Ollama](https://img.shields.io/badge/Ollama-Gemma_4-000000?logo=ollama&logoColor=white)](https://ollama.com)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Tests: 206+](https://img.shields.io/badge/Tests-206+-green.svg)]()
 
 **Zéro cloud. Zéro API payante. Zéro tracking.**<br>
@@ -382,7 +382,9 @@ Les contributions sont les bienvenues ! Crabot est un projet open source né en 
 
 ## 📜 Licence
 
-MIT — fais-en ce que tu veux.
+Apache 2.0 — libre d'utilisation, modification et distribution. Protection brevets incluse pour les contributeurs.
+
+Voir le fichier [LICENSE](LICENSE) pour les détails.
 
 ---
 
