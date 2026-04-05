@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from pathlib import Path
+from typing import Any
 
 from agent.config import get_settings, Settings
 from agent.models.ollama_client import OllamaClient
@@ -22,6 +23,9 @@ from agent.memory.entity_extractor import EntityExtractor
 from agent.intelligence.skill_injector import get_skill_context
 from agent.personality.loader import load_personality, Personality
 from agent.schemas import AgentResult, ScoredResult, CriticScore, StepResult, Plan
+
+# Type alias for progress callbacks: (phase, detail) -> None or Awaitable[None]
+ProgressCallback = Any  # Callable[[str, str], Awaitable[None] | None] | None
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +72,18 @@ class Agent:
         await self._client.close()
         await self._memory.close()
 
-    async def run(self, user_input: str) -> AgentResult:
+    async def _notify(self, cb: ProgressCallback, phase: str, detail: str) -> None:
+        """Fire progress callback if set."""
+        if cb is not None:
+            ret = cb(phase, detail)
+            if ret is not None:
+                await ret
+
+    async def run(
+        self,
+        user_input: str,
+        on_progress: ProgressCallback = None,
+    ) -> AgentResult:
         """Execute the full agent pipeline on user input."""
         start = time.monotonic()
         logger.info("=== Agent started: %s", user_input[:100])
@@ -84,15 +99,17 @@ class Agent:
             else:
                 logger.info("Resuming previous plan from step %d", resume_after + 1)
                 return await self._execute_pipeline(
-                    user_input, plan, resume_after, start
+                    user_input, plan, resume_after, start, on_progress
                 )
 
         # Phase 0: Triage
         logger.info("Phase 0: Triage...")
+        await self._notify(on_progress, "triage", "Classifying input...")
         complexity = await self._triage.classify(user_input)
         logger.info("Triage: %s", complexity)
 
         if complexity == "simple":
+            await self._notify(on_progress, "executing", "Direct answer...")
             result = await self._executor.execute_direct(user_input)
             elapsed = time.monotonic() - start
             logger.info("=== Simple path done in %.1fs", elapsed)
@@ -117,6 +134,7 @@ class Agent:
         context_parts: list[str] = []
         if self._memory.available:
             logger.info("Phase 0.5: Memory read...")
+            await self._notify(on_progress, "memory", "Loading context...")
             # Run entity extraction and embedding in parallel
             entities_task = self._entity_extractor.extract(user_input)
             embed_task = self._embedder.embed(user_input)
@@ -138,10 +156,12 @@ class Agent:
 
         # Phase 1: Plan
         logger.info("Phase 1: Planning...")
+        await self._notify(on_progress, "planning", "Building plan...")
         plan = await self._planner.plan(user_input, context=context)
         logger.info("Plan: %s (%d steps)", plan.goal, len(plan.steps))
+        await self._notify(on_progress, "planning", f"Plan: {len(plan.steps)} steps")
 
-        return await self._execute_pipeline(user_input, plan, 0, start)
+        return await self._execute_pipeline(user_input, plan, 0, start, on_progress)
 
     async def _execute_pipeline(
         self,
@@ -149,6 +169,7 @@ class Agent:
         plan: object,
         resume_after: int,
         start: float,
+        on_progress: ProgressCallback = None,
     ) -> AgentResult:
         """Execute the plan→execute→critique pipeline."""
         from agent.schemas import Plan
@@ -160,10 +181,16 @@ class Agent:
 
         # Phase 2: Execute
         logger.info("Phase 2: Executing...")
+        total_steps = len(plan.steps)
+        await self._notify(on_progress, "executing", f"Step 0/{total_steps}")
 
         def _on_step_done(step_id: int) -> None:
             if self._settings.recovery.persist_cursor:
                 self._state.advance_cursor(step_id)
+            if on_progress is not None:
+                asyncio.ensure_future(
+                    self._notify(on_progress, "executing", f"Step {step_id}/{total_steps}")
+                )
 
         results = await self._executor.execute(
             plan, on_step_done=_on_step_done, resume_after=resume_after
@@ -171,6 +198,7 @@ class Agent:
 
         # Phase 3: Critique
         logger.info("Phase 3: Critiquing...")
+        await self._notify(on_progress, "critiquing", "Evaluating quality...")
         scored = await self._critic.evaluate(plan, results)
 
         # Clear state on success

@@ -97,6 +97,8 @@ class MemoryClient:
             "CREATE INDEX episode_score IF NOT EXISTS FOR (ep:Episode) ON (ep.score)",
             "CREATE INDEX episode_timestamp IF NOT EXISTS FOR (ep:Episode) ON (ep.timestamp)",
             "CREATE INDEX entity_type IF NOT EXISTS FOR (e:Entity) ON (e.type)",
+            "CREATE CONSTRAINT job_id IF NOT EXISTS FOR (j:Job) REQUIRE j.id IS UNIQUE",
+            "CREATE INDEX job_status IF NOT EXISTS FOR (j:Job) ON (j.status)",
         ]
         vector_query = (
             "CREATE VECTOR INDEX episode_embedding IF NOT EXISTS "
@@ -513,3 +515,132 @@ class MemoryClient:
         except Exception as exc:
             logger.warning("Memory compression failed: %s", exc)
             return 0
+
+    # -- Job persistence -------------------------------------------------------
+
+    async def persist_job(
+        self,
+        job_id: str,
+        user_input: str,
+        status: str,
+        chat_id: int,
+        current_phase: str = "",
+        progress: str = "",
+        created_at: str = "",
+        started_at: str | None = None,
+        completed_at: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Create or update a Job node."""
+        if not self._available:
+            return
+
+        try:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MERGE (j:Job {id: $id})
+                    SET j.user_input = $user_input,
+                        j.status = $status,
+                        j.chat_id = $chat_id,
+                        j.current_phase = $current_phase,
+                        j.progress = $progress,
+                        j.created_at = $created_at,
+                        j.started_at = $started_at,
+                        j.completed_at = $completed_at,
+                        j.error = $error
+                    """,
+                    id=job_id,
+                    user_input=user_input[:500],
+                    status=status,
+                    chat_id=chat_id,
+                    current_phase=current_phase,
+                    progress=progress,
+                    created_at=created_at,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    error=error,
+                )
+        except Exception as exc:
+            logger.warning("Job persist failed: %s", exc)
+
+    async def update_job_status(
+        self,
+        job_id: str,
+        status: str,
+        current_phase: str = "",
+        progress: str = "",
+        completed_at: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Lightweight job status update."""
+        if not self._available:
+            return
+
+        try:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MATCH (j:Job {id: $id})
+                    SET j.status = $status,
+                        j.current_phase = $current_phase,
+                        j.progress = $progress,
+                        j.completed_at = $completed_at,
+                        j.error = $error
+                    """,
+                    id=job_id,
+                    status=status,
+                    current_phase=current_phase,
+                    progress=progress,
+                    completed_at=completed_at,
+                    error=error,
+                )
+        except Exception as exc:
+            logger.warning("Job status update failed: %s", exc)
+
+    async def get_active_jobs(self, chat_id: int | None = None) -> list[dict]:
+        """Retrieve pending/running jobs, optionally filtered by chat_id."""
+        if not self._available:
+            return []
+
+        try:
+            async with self._driver.session() as session:
+                if chat_id is not None:
+                    result = await session.run(
+                        """
+                        MATCH (j:Job) WHERE j.status IN ["pending", "running"]
+                          AND j.chat_id = $chat_id
+                        RETURN j ORDER BY j.created_at DESC LIMIT 20
+                        """,
+                        chat_id=chat_id,
+                    )
+                else:
+                    result = await session.run(
+                        """
+                        MATCH (j:Job) WHERE j.status IN ["pending", "running"]
+                        RETURN j ORDER BY j.created_at DESC LIMIT 20
+                        """,
+                    )
+                records = await result.data()
+                return [dict(r["j"]) for r in records]
+        except Exception as exc:
+            logger.warning("Get active jobs failed: %s", exc)
+            return []
+
+    async def link_job_episode(self, job_id: str, episode_id: str) -> None:
+        """Link a completed Job to its resulting Episode."""
+        if not self._available:
+            return
+
+        try:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MATCH (j:Job {id: $job_id}), (ep:Episode {id: $episode_id})
+                    MERGE (j)-[:PRODUCED]->(ep)
+                    """,
+                    job_id=job_id,
+                    episode_id=episode_id,
+                )
+        except Exception as exc:
+            logger.warning("Link job-episode failed: %s", exc)

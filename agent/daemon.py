@@ -9,6 +9,7 @@ from agent.agent import Agent
 from agent.config import Settings, get_settings
 from agent.core.heartbeat import run_heartbeat
 from agent.core.goal_engine import run_goal_cycle
+from agent.core.job_manager import JobManager
 from agent.core.scheduler import AgentScheduler, ScheduledTask, Event
 from agent.env import load_dotenv
 from agent.interfaces.telegram_bot import TelegramBot
@@ -53,6 +54,13 @@ async def run_daemon(settings: Settings | None = None) -> None:
     agent = Agent(settings)
     await agent.initialize()
 
+    # Job manager for async background processing
+    job_manager = JobManager(
+        agent=agent,
+        memory=agent.memory,
+        max_concurrent=settings.daemon.max_concurrent,
+    )
+
     # Start scheduler with built-in autonomous tasks
     scheduler = _HeartbeatScheduler(agent)
 
@@ -86,7 +94,7 @@ async def run_daemon(settings: Settings | None = None) -> None:
                 len(settings.scheduler.cron_tasks))
 
     try:
-        bot = TelegramBot(agent, settings)
+        bot = TelegramBot(agent, settings, job_manager=job_manager)
         await bot.start()
     except KeyboardInterrupt:
         logger.info("Interrupted by user")

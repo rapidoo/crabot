@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -64,3 +65,31 @@ class ScoredResult(BaseModel):
 class AgentResult(BaseModel):
     goal: str
     results: list[ScoredResult]
+
+
+# ---------------------------------------------------------------------------
+# Background Jobs
+# ---------------------------------------------------------------------------
+
+
+class JobStatus(str, Enum):
+    pending = "pending"
+    running = "running"
+    done = "done"
+    failed = "failed"
+
+
+class Job(BaseModel):
+    id: str
+    user_input: str
+    status: JobStatus = JobStatus.pending
+    chat_id: int = 0
+    message_id: int | None = None
+    created_at: str = ""
+    started_at: str | None = None
+    completed_at: str | None = None
+    current_phase: str = "pending"
+    progress: str = ""
+    result: AgentResult | None = None
+    error: str | None = None
+    episode_id: str | None = None

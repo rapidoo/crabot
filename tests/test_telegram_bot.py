@@ -71,8 +71,11 @@ class TestTelegramBotInit:
             agent = AsyncMock()
             settings = Settings()
 
+            from agent.core.job_manager import JobManager
+            jm = JobManager(agent=agent, memory=AsyncMock())
+
             with pytest.raises(RuntimeError, match="No Telegram bot token"):
-                TelegramBot(agent, settings)
+                TelegramBot(agent, settings, job_manager=jm)
         except ImportError:
             pytest.skip("python-telegram-bot not installed")
 
@@ -89,7 +92,9 @@ class TestTelegramBotInit:
                 telegram={"bot_token": "fake_token", "allowed_users": [100, 200]},
             )
 
-            bot = TelegramBot(agent, settings)
+            from agent.core.job_manager import JobManager
+            jm = JobManager(agent=agent, memory=AsyncMock())
+            bot = TelegramBot(agent, settings, job_manager=jm)
             assert bot._is_allowed(100) is True
             assert bot._is_allowed(200) is True
             assert bot._is_allowed(999) is False
@@ -110,7 +115,9 @@ class TestTelegramBotInit:
                 telegram={"bot_token": "fake_token", "allowed_users": []},
             )
 
-            bot = TelegramBot(agent, settings)
+            from agent.core.job_manager import JobManager
+            jm = JobManager(agent=agent, memory=AsyncMock())
+            bot = TelegramBot(agent, settings, job_manager=jm)
             assert bot._is_allowed(999) is True
 
         except ImportError:

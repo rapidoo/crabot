@@ -1,14 +1,17 @@
-"""Telegram bot interface — long polling, wraps the Agent pipeline."""
+"""Telegram bot interface — long polling, async job dispatch."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+import time
 
 from agent.agent import Agent
 from agent.config import Settings
+from agent.core.job_manager import JobManager
 from agent.personality.loader import Personality, load_personality
+from agent.schemas import Job, JobStatus
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +47,25 @@ def _split_message(text: str, max_len: int = 4000) -> list[str]:
     return chunks
 
 
-class TelegramBot:
-    """Telegram bot that forwards messages to the Nano Agent."""
+# Phase labels for progress updates
+_PHASE_LABELS = {
+    "triage": "Analyse",
+    "memory": "Contexte",
+    "planning": "Planification",
+    "executing": "Exécution",
+    "critiquing": "Évaluation",
+    "done": "Terminé",
+    "failed": "Erreur",
+}
 
-    def __init__(self, agent: Agent, settings: Settings):
+# Minimum interval between progress edits (Telegram rate limit protection)
+_PROGRESS_THROTTLE_S = 3.0
+
+
+class TelegramBot:
+    """Telegram bot that forwards messages to the Nano Agent via background jobs."""
+
+    def __init__(self, agent: Agent, settings: Settings, job_manager: JobManager):
         if not HAS_TELEGRAM:
             raise RuntimeError(
                 "python-telegram-bot not installed. Run: pip install 'nano-agent[telegram]'"
@@ -56,7 +74,7 @@ class TelegramBot:
         self._agent = agent
         self._identity = getattr(agent, '_personality', load_personality()).identity
         self._settings = settings
-        self._semaphore = asyncio.Semaphore(settings.daemon.max_concurrent)
+        self._job_manager = job_manager
         self._max_len = settings.telegram.max_message_length
         self._allowed_users = set(settings.telegram.allowed_users)
 
@@ -68,6 +86,13 @@ class TelegramBot:
             )
         self._token = token
         self._app: Application | None = None
+
+        # Track last progress edit time per job (for throttling)
+        self._last_edit: dict[str, float] = {}
+
+        # Register callbacks
+        job_manager.set_progress_callback(self._on_job_progress)
+        job_manager.set_completion_callback(self._on_job_complete)
 
     async def start(self) -> None:
         """Start the bot in long-polling mode (blocks forever)."""
@@ -83,6 +108,9 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("good", self._handle_good))
         self._app.add_handler(CommandHandler("bad", self._handle_bad))
         self._app.add_handler(CommandHandler("stats", self._handle_stats))
+        self._app.add_handler(CommandHandler("status", self._handle_status))
+        self._app.add_handler(CommandHandler("jobs", self._handle_status))
+        self._app.add_handler(CommandHandler("cancel", self._handle_cancel))
         self._app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
         )
@@ -116,16 +144,17 @@ class TelegramBot:
 
     def _is_allowed(self, user_id: int) -> bool:
         if not self._allowed_users:
-            return True  # No filter = everyone allowed
+            return True
         return user_id in self._allowed_users
+
+    # -- Command handlers ------------------------------------------------------
 
     async def _handle_start(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         await update.message.reply_text(
-            "Nano Agent ready. Send me a message and I'll process it through "
-            "the Plan → Execute → Critique pipeline.\n\n"
-            "/help for more info."
+            "Nano Agent ready. Send me a message and I'll process it "
+            "in background.\n\n/help for more info."
         )
 
     async def _handle_help(
@@ -133,10 +162,12 @@ class TelegramBot:
     ) -> None:
         await update.message.reply_text(
             "Send me any task or question.\n\n"
-            "Simple questions get a fast answer (~1s).\n"
-            "Complex tasks go through planning, execution, and critique.\n\n"
+            "Simple questions get a fast answer.\n"
+            "Complex tasks run in background — I stay available.\n\n"
             "Commands:\n"
-            "/good — validate the last result (improves future quality)\n"
+            "/status — see running jobs\n"
+            "/cancel [job_id] — cancel a running job\n"
+            "/good — validate the last result\n"
             "/bad [reason] — reject the last result\n"
             "/stats — show performance metrics\n\n"
             "Examples:\n"
@@ -148,6 +179,7 @@ class TelegramBot:
     async def _handle_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
+        """Acknowledge immediately, dispatch job in background."""
         user_id = update.effective_user.id
         user_name = update.effective_user.first_name or str(user_id)
         text = update.message.text
@@ -159,44 +191,82 @@ class TelegramBot:
 
         logger.info("Message from %s (%d): %s", user_name, user_id, text[:80])
 
-        # Send typing indicator
-        await update.message.chat.send_action("typing")
+        # Immediate acknowledgment
+        ack = await update.message.reply_text("Je travaille dessus...")
 
-        try:
-            async with self._semaphore:
-                result = await asyncio.wait_for(
-                    self._agent.run(text),
-                    timeout=self._settings.daemon.request_timeout,
-                )
+        # Submit background job (returns immediately)
+        job = await self._job_manager.submit(
+            user_input=text,
+            chat_id=update.effective_chat.id,
+            message_id=ack.message_id,
+        )
+        logger.info("Job %s submitted for %s", job.id, user_name)
 
-            # Format response
-            response = self._format_result(result)
+    async def _handle_status(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Show active and recent jobs for this chat."""
+        if not self._is_allowed(update.effective_user.id):
+            return
 
-            # Split and send
-            for chunk in _split_message(response, self._max_len):
-                await update.message.reply_text(chunk)
+        chat_id = update.effective_chat.id
+        active = self._job_manager.get_active_jobs(chat_id)
+        recent = self._job_manager.get_recent_jobs(chat_id, limit=5)
 
-            logger.info(
-                "Reply to %s: %d steps, scores=%s",
-                user_name,
-                len(result.results),
-                [r.score.final_score for r in result.results],
-            )
+        lines: list[str] = []
+        if active:
+            lines.append("Jobs en cours:")
+            for j in active:
+                phase = _PHASE_LABELS.get(j.current_phase, j.current_phase)
+                lines.append(f"  • {j.id[:8]} — {phase} — {j.progress}")
+                lines.append(f"    \"{j.user_input[:60]}\"")
+        else:
+            lines.append("Aucun job en cours.")
 
-        except asyncio.TimeoutError:
-            await update.message.reply_text(
-                "Timeout — the task took too long. Try a simpler request."
-            )
-            logger.warning("Timeout for user %s on: %s", user_name, text[:80])
+        done = [j for j in recent if j.status in (JobStatus.done, JobStatus.failed)]
+        if done:
+            lines.append("\nRécents:")
+            for j in done[:3]:
+                icon = "✓" if j.status == JobStatus.done else "✗"
+                lines.append(f"  {icon} {j.id[:8]} — \"{j.user_input[:60]}\"")
 
-        except Exception as exc:
-            await update.message.reply_text(f"Error: {exc}")
-            logger.error("Error processing message from %s: %s", user_name, exc)
+        await update.message.reply_text("\n".join(lines))
+
+    async def _handle_cancel(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Cancel a running job by ID prefix."""
+        if not self._is_allowed(update.effective_user.id):
+            return
+
+        if not context.args:
+            # Cancel most recent active job for this chat
+            active = self._job_manager.get_active_jobs(update.effective_chat.id)
+            if not active:
+                await update.message.reply_text("Aucun job à annuler.")
+                return
+            job_id = active[0].id
+        else:
+            # Find job matching prefix
+            prefix = context.args[0]
+            job_id = None
+            for j in self._job_manager.get_active_jobs():
+                if j.id.startswith(prefix):
+                    job_id = j.id
+                    break
+            if not job_id:
+                await update.message.reply_text(f"Job '{prefix}' not found.")
+                return
+
+        cancelled = await self._job_manager.cancel_job(job_id)
+        if cancelled:
+            await update.message.reply_text(f"Job {job_id[:8]} annulé.")
+        else:
+            await update.message.reply_text(f"Job {job_id[:8]} déjà terminé.")
 
     async def _handle_good(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """User validates the last result — positive feedback signal."""
         if not self._is_allowed(update.effective_user.id):
             return
         episode_id = self._agent.last_episode_id
@@ -211,7 +281,6 @@ class TelegramBot:
     async def _handle_bad(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """User rejects the last result — negative feedback signal."""
         if not self._is_allowed(update.effective_user.id):
             return
         episode_id = self._agent.last_episode_id
@@ -229,7 +298,6 @@ class TelegramBot:
     async def _handle_stats(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Show performance metrics."""
         if not self._is_allowed(update.effective_user.id):
             return
         from agent.infra.metrics import MetricsCollector
@@ -238,7 +306,7 @@ class TelegramBot:
         if summary.get("total_episodes", 0) == 0:
             await update.message.reply_text("No data yet.")
             return
-        lines = [f"📊 Last {summary['total_episodes']} episodes:"]
+        lines = [f"Last {summary['total_episodes']} episodes:"]
         lines.append(f"  Avg score: {summary.get('avg_score', 0):.1f}")
         lines.append(f"  Avg latency: {summary.get('avg_latency_s', 0):.1f}s")
         lines.append(f"  Retry rate: {summary.get('retry_rate', 0):.0%}")
@@ -248,6 +316,86 @@ class TelegramBot:
             for k, v in by_type.items():
                 lines.append(f"    {k}: {v:.1f}")
         await update.message.reply_text("\n".join(lines))
+
+    # -- Job callbacks ---------------------------------------------------------
+
+    async def _on_job_progress(self, job: Job) -> None:
+        """Edit the ack message with progress (throttled)."""
+        if not self._app or not job.message_id:
+            return
+
+        # Throttle edits to avoid Telegram rate limits
+        now = time.monotonic()
+        last = self._last_edit.get(job.id, 0)
+        if now - last < _PROGRESS_THROTTLE_S:
+            return
+        self._last_edit[job.id] = now
+
+        phase = _PHASE_LABELS.get(job.current_phase, job.current_phase)
+        text = f"En cours... {phase}"
+        if job.progress:
+            text += f" — {job.progress}"
+
+        try:
+            await self._app.bot.edit_message_text(
+                chat_id=job.chat_id,
+                message_id=job.message_id,
+                text=text,
+            )
+        except Exception:
+            pass  # Edit can fail if message is identical or too old
+
+    async def _on_job_complete(self, job: Job) -> None:
+        """Send final result as a new message (triggers notification)."""
+        if not self._app:
+            return
+
+        # Clean up throttle tracking
+        self._last_edit.pop(job.id, None)
+
+        if job.status == JobStatus.done and job.result:
+            # Edit ack to show completion
+            if job.message_id:
+                try:
+                    await self._app.bot.edit_message_text(
+                        chat_id=job.chat_id,
+                        message_id=job.message_id,
+                        text="Terminé",
+                    )
+                except Exception:
+                    pass
+
+            # Send result as new message (triggers push notification)
+            response = self._format_result(job.result)
+            for chunk in _split_message(response, self._max_len):
+                await self._app.bot.send_message(chat_id=job.chat_id, text=chunk)
+
+            logger.info(
+                "Job %s result sent: %d steps, scores=%s",
+                job.id,
+                len(job.result.results),
+                [r.score.final_score for r in job.result.results],
+            )
+
+        elif job.status == JobStatus.failed:
+            error_msg = f"Erreur: {job.error or 'Unknown error'}"
+            if job.message_id:
+                try:
+                    await self._app.bot.edit_message_text(
+                        chat_id=job.chat_id,
+                        message_id=job.message_id,
+                        text=error_msg,
+                    )
+                except Exception:
+                    await self._app.bot.send_message(
+                        chat_id=job.chat_id, text=error_msg
+                    )
+            else:
+                await self._app.bot.send_message(
+                    chat_id=job.chat_id, text=error_msg
+                )
+
+    # -- Formatting ------------------------------------------------------------
 
     def _format_result(self, result) -> str:
         """Format an AgentResult into a readable Telegram message."""
@@ -260,7 +408,6 @@ class TelegramBot:
             score = sr.score.final_score
             icon = "✓" if score >= 6.5 else "✗"
             lines.append(f"{icon} Step {sr.step.id} [{score:.0f}/10] ({sr.step.tool}):")
-            # Truncate long outputs
             output = sr.result.output
             if len(output) > 1500:
                 output = output[:1500] + "\n... (truncated)"
