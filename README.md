@@ -101,6 +101,8 @@ models:
 - **4B** : triage en moins d'une seconde, zéro latence perçue
 - **Open weights** : pas de licence restrictive, pas de call home
 
+> 🧪 **Testé sur MacBook Pro M4 Pro, 48 Go RAM** — les 3 modèles Gemma 4 tournent simultanément sans broncher.
+
 > Fonctionne aussi avec n'importe quel modèle Ollama — Llama 3, Mistral, Qwen... Change 4 lignes dans `config.yaml`.
 
 ---
