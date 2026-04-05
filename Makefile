@@ -45,6 +45,9 @@ stop-neo4j:
 	docker stop nano-neo4j && docker rm nano-neo4j
 
 # Run agent
+chat:
+	.venv/bin/python -m agent
+
 run:
 	.venv/bin/python -m agent $(PROMPT)
 
