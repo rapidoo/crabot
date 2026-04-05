@@ -9,11 +9,32 @@ from agent.agent import Agent
 from agent.config import Settings, get_settings
 from agent.core.heartbeat import run_heartbeat
 from agent.core.goal_engine import run_goal_cycle
-from agent.core.scheduler import AgentScheduler, ScheduledTask
+from agent.core.scheduler import AgentScheduler, ScheduledTask, Event
 from agent.env import load_dotenv
 from agent.interfaces.telegram_bot import TelegramBot
 
 logger = logging.getLogger(__name__)
+
+
+class _HeartbeatScheduler(AgentScheduler):
+    """Scheduler that intercepts special prompts for heartbeat/goals."""
+
+    async def _dispatch_loop(self) -> None:
+        while self._running:
+            try:
+                event = await asyncio.wait_for(self._queue.get(), timeout=5.0)
+            except asyncio.TimeoutError:
+                continue
+            try:
+                if event.prompt == "__heartbeat__":
+                    await run_heartbeat(self._agent)
+                elif event.prompt == "__goal_cycle__":
+                    await run_goal_cycle(self._agent)
+                else:
+                    logger.info("Scheduler: dispatching event from '%s'", event.source)
+                    await self._agent.run(event.prompt)
+            except Exception as exc:
+                logger.error("Scheduler: event processing failed: %s", exc)
 
 
 async def run_daemon(settings: Settings | None = None) -> None:
@@ -33,7 +54,7 @@ async def run_daemon(settings: Settings | None = None) -> None:
     await agent.initialize()
 
     # Start scheduler with built-in autonomous tasks
-    scheduler = AgentScheduler(agent)
+    scheduler = _HeartbeatScheduler(agent)
 
     # Heartbeat — every 30 minutes
     scheduler.add_task(ScheduledTask(
@@ -59,19 +80,6 @@ async def run_daemon(settings: Settings | None = None) -> None:
             schedule_type=task_cfg.schedule_type,
             schedule_value=task_cfg.schedule,
         ))
-
-    # Override dispatch to handle special prompts
-    original_dispatch = scheduler._dispatch
-
-    async def _smart_dispatch(task: ScheduledTask) -> None:
-        if task.prompt == "__heartbeat__":
-            await run_heartbeat(agent)
-        elif task.prompt == "__goal_cycle__":
-            await run_goal_cycle(agent)
-        else:
-            await original_dispatch(task)
-
-    scheduler._dispatch = _smart_dispatch  # type: ignore
 
     await scheduler.start()
     logger.info("Scheduler started: heartbeat (30m), goals (15m), %d user tasks",
