@@ -28,7 +28,7 @@ RAM constraint: only 2 models fit simultaneously. Ollama handles model swapping 
 
 ### Key Design Decisions
 
-- All LLM calls go directly to Ollama `/api/chat` — no SDK wrapper
+- Chat/inference calls go directly to Ollama `/api/chat` via httpx (no SDK wrapper); embeddings use the `ollama` SDK (`import ollama`)
 - Plans are validated with **pydantic** (strict JSON schema)
 - Tool registry uses factory pattern — add tools without touching the orchestrator
 - Cursor recovery: persist step progress for crash resilience (atomic write .tmp + rename)

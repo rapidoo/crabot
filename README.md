@@ -116,8 +116,9 @@ User Input (CLI / Telegram / REPL)
 Triage (4B, <1s) ──── simple ──► Réponse directe + SOUL.md
     │ complex
     ▼
-Memory Read (Neo4j) ── épisodes passés + skills apprises
-    │
+Memory Read (Neo4j) ── recherche hybride (vector 70% + lexical 30%)
+    │                    embeddings nomic-embed-text + entités
+    │                    skills apprises (cache TTL 5min)
     ▼
 Planner (26B) ──────── plan JSON + AGENTS.md rules + tools dynamiques
     │
@@ -134,7 +135,8 @@ Executor (26B) ──────── exécute les steps :
 Critic (31B) ────────── score 0-10, retry si < seuil adaptatif
     │
     ▼
-Memory Write (Neo4j) ── épisode + entités + skills extraites
+Memory Write (Neo4j) ── épisode + embedding + entités + skills extraites
+    │                    transactions atomiques, compression auto
 ```
 
 Le pattern **Plan → Execute → Critique** garantit que chaque réponse complexe est vérifiée avant d'être envoyée. Si le Critic n'est pas satisfait, l'Executor recommence — automatiquement.
@@ -153,6 +155,7 @@ Le pattern **Plan → Execute → Critique** garantit que chaque réponse comple
 ollama pull gemma4          # 4B — minimum pour démarrer (9.6 Go)
 ollama pull gemma4:26b      # 26B MoE — recommandé (18 Go)
 ollama pull gemma4:31b      # 31B Dense — optionnel, pour le Critic (20 Go)
+ollama pull nomic-embed-text # Embeddings — pour la recherche sémantique (274 Mo)
 ```
 
 ### Installation
@@ -183,9 +186,11 @@ make daemon
 
 ## 🧠 Ce qui rend Crabot intelligent
 
-### Mémoire persistante
+### Mémoire persistante + recherche hybride
 
-Crabot se souvient. Grâce à Neo4j, chaque conversation est stockée sous forme d'épisodes dans un graphe de connaissances. Les entités sont extraites, les skills sont apprises, les patterns réutilisés.
+Crabot se souvient — et comprend le sens, pas juste les mots. Grâce à Neo4j, chaque conversation est stockée sous forme d'épisodes dans un graphe de connaissances. Les entités sont extraites, les skills sont apprises, les patterns réutilisés.
+
+La recherche de contexte est **hybride** : similarité vectorielle (70%) via embeddings `nomic-embed-text` + matching lexical sur entités (30%). Même si tu reformules différemment, Crabot retrouve les épisodes pertinents.
 
 ### Auto-évolution
 
@@ -201,9 +206,11 @@ Demande-lui de créer un outil — il le code, le teste, l'enregistre, et l'util
 
 Les outils custom sont auto-découverts au démarrage et injectés dans le Planner.
 
-### Dreaming (consolidation mémorielle)
+### Dreaming + compression mémorielle
 
 Inspiré des neurosciences : Crabot consolide sa mémoire périodiquement en fonction de la fréquence, pertinence, diversité et récence des épisodes. Les souvenirs inutiles s'estompent, les patterns importants se renforcent.
+
+Les vieux épisodes à faible score sont automatiquement purgés (configurable : `compress_after_days`, `compress_min_keep`) pour garder le graphe compact et les requêtes rapides.
 
 ### Loop detection
 
@@ -345,9 +352,10 @@ crabot/
 │   │   ├── dreaming.py        Consolidation mémorielle
 │   │   └── skill_injector.py  Injection skills
 │   ├── memory/
-│   │   ├── neo4j_client.py    Graphe (épisodes, entités, skills)
+│   │   ├── neo4j_client.py    Graphe (épisodes, entités, skills, vecteurs)
+│   │   ├── embedder.py        Embeddings via ollama SDK (nomic-embed-text)
 │   │   ├── entity_extractor.py Extraction entités via LLM
-│   │   └── schemas.cypher     Setup Neo4j
+│   │   └── schemas.cypher     Setup Neo4j + index vectoriel
 │   └── infra/
 │       ├── state.py           Crash recovery
 │       ├── retry.py           Backoff exponentiel
@@ -374,7 +382,9 @@ crabot/
 - [ ] **Quotas** — limites de tokens / requêtes par utilisateur et par jour
 
 ### 🧠 Intelligence
-- [ ] **RAG sur documents locaux** — ingestion PDF, Markdown, code source avec chunking + embeddings
+- [x] **Recherche hybride par embeddings** — vector similarity (70%) + lexical (30%) via `nomic-embed-text` + Neo4j vector index
+- [x] **Compression mémorielle** — purge automatique des vieux épisodes bas-score
+- [ ] **RAG sur documents locaux** — ingestion PDF, Markdown, code source avec chunking
 - [ ] **Conversation multi-tours** — contexte glissant sur les N derniers échanges
 - [ ] **Planning long terme** — décomposition de projets en sous-goals avec suivi automatique
 - [ ] **Self-evaluation benchmarks** — l'agent s'auto-évalue sur une suite de tests et ajuste ses prompts
