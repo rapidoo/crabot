@@ -360,11 +360,39 @@ crabot/
 
 ## 🗺️ Roadmap
 
-- [ ] Support multi-utilisateurs
-- [ ] Interface web locale
-- [ ] RAG sur documents locaux (PDF, Markdown)
-- [ ] Plugins communautaires (`agent/tools/custom/`)
-- [ ] Packaging Homebrew / Docker
+### 🔐 Sécurité & authentification
+- [ ] **Auth Telegram renforcée** — whitelist par username en plus des user IDs, confirmation à la première connexion
+- [ ] **Rate limiting** — limite de requêtes par utilisateur (anti-flood / anti-abus)
+- [ ] **Sandboxing renforcé** — isolation des outils custom (seccomp / nsjail pour `code_exec`)
+- [ ] **Audit log** — journal immuable de toutes les actions agent (qui, quand, quoi)
+- [ ] **Chiffrement mémoire** — chiffrement at-rest des épisodes Neo4j (données personnelles)
+
+### 👥 Multi-utilisateurs
+- [ ] **Contextes isolés** — chaque utilisateur a sa propre mémoire, ses goals, ses outils custom
+- [ ] **Profils utilisateur dynamiques** — `USER.md` par utilisateur, appris au fil des conversations
+- [ ] **Rôles & permissions** — admin / utilisateur / lecture seule
+- [ ] **Quotas** — limites de tokens / requêtes par utilisateur et par jour
+
+### 🧠 Intelligence
+- [ ] **RAG sur documents locaux** — ingestion PDF, Markdown, code source avec chunking + embeddings
+- [ ] **Conversation multi-tours** — contexte glissant sur les N derniers échanges
+- [ ] **Planning long terme** — décomposition de projets en sous-goals avec suivi automatique
+- [ ] **Self-evaluation benchmarks** — l'agent s'auto-évalue sur une suite de tests et ajuste ses prompts
+- [ ] **Fine-tuning local** — adaptation du modèle sur les épisodes à score élevé (LoRA)
+
+### 🔌 Intégrations & interfaces
+- [ ] **Interface web locale** — dashboard avec historique, métriques, configuration en live
+- [ ] **API REST** — endpoint HTTP pour intégrer Crabot dans d'autres outils
+- [ ] **Discord / Slack** — interfaces alternatives à Telegram
+- [ ] **Webhooks** — notifications push sur événements (goal atteint, erreur critique, etc.)
+- [ ] **MCP server** — exposer Crabot comme serveur Model Context Protocol
+
+### 📦 Distribution
+- [ ] **Docker Compose** — one-liner avec Ollama + Neo4j + Crabot
+- [ ] **Homebrew tap** — `brew install crabot`
+- [ ] **Plugins communautaires** — marketplace de `agent/tools/custom/` partagés
+- [ ] **Config wizard** — assistant interactif de première installation
+- [ ] **Documentation multilingue** — README en anglais, docs en FR/EN
 
 ---
 
