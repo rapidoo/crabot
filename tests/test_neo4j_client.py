@@ -60,9 +60,9 @@ class TestMemoryClientUnit:
         """When neo4j package is not installed."""
         with patch("agent.memory.neo4j_client.HAS_NEO4J", False):
             client = MemoryClient()
-            # Reimport won't help, but we can test the path
-            # by directly checking the flag
-            assert not HAS_NEO4J or True  # passes regardless
+            connected = await client.connect()
+            assert not connected
+            assert not client.available
 
 
 # ---------------------------------------------------------------------------

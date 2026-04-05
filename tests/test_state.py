@@ -28,10 +28,11 @@ class TestStateManager:
         sm2 = StateManager(state_file)
         loaded = sm2.load_state()
         assert loaded is not None
-        loaded_plan, cursor = loaded
+        loaded_plan, cursor, saved_input = loaded
         assert loaded_plan.goal == "Test plan"
         assert len(loaded_plan.steps) == 3
         assert cursor == 0
+        assert saved_input == ""
 
     def test_advance_cursor(self, tmp_path):
         state_file = tmp_path / "state.json"
@@ -45,7 +46,7 @@ class TestStateManager:
         sm2 = StateManager(state_file)
         loaded = sm2.load_state()
         assert loaded is not None
-        _, cursor = loaded
+        _, cursor, _ = loaded
         assert cursor == 2
 
     def test_clear(self, tmp_path):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from functools import lru_cache
 
@@ -13,6 +14,43 @@ class SamplingParams(BaseModel):
     temperature: float = 1.0
     top_p: float = 0.95
     top_k: int = 64
+
+
+MODEL_PRESETS: dict[str, dict[str, str]] = {
+    "GEMMA4": {
+        "triage": "gemma4:e4b",
+        "planner": "gemma4:26b",
+        "executor": "gemma4:26b",
+        "executor_draft": "gemma4:e4b",
+        "critic": "gemma4:31b",
+        "critic_light": "gemma4:26b",
+    },
+    "MISTRAL": {
+        "triage": "ministral-3:8b",
+        "planner": "mistral-small3.2",
+        "executor": "mistral-small3.2",
+        "executor_draft": "ministral-3:3b",
+        "critic": "mistral-small4",
+        "critic_light": "mistral-small3.2",
+    },
+}
+
+_DEFAULT_PRESET = "GEMMA4"
+
+
+def _get_model_preset() -> dict[str, str]:
+    """Return the model preset based on MODEL_NAME env var."""
+    name = os.environ.get("MODEL_NAME", _DEFAULT_PRESET).upper()
+    if name not in MODEL_PRESETS:
+        raise ValueError(
+            f"Unknown MODEL_NAME={name!r}. Valid presets: {list(MODEL_PRESETS)}"
+        )
+    return MODEL_PRESETS[name]
+
+
+def _default_models() -> dict[str, str]:
+    preset = _get_model_preset()
+    return {**preset, "ollama_base_url": "http://localhost:11434"}
 
 
 class ModelsConfig(BaseModel):
@@ -70,10 +108,18 @@ class RecoveryConfig(BaseModel):
 class MemoryConfig(BaseModel):
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
-    neo4j_password: str = "neo4j"
+    neo4j_password: str = ""
     context_k: int = 5
     write_threshold: float = 5.0
+    read_threshold: float = 6.5
     entity_extraction: bool = True
+    compress_after_days: int = 30
+    compress_min_keep: int = 50
+    embedding_model: str = "nomic-embed-text"
+    embedding_dimensions: int = 768
+    vector_weight: float = 0.7
+    lexical_weight: float = 0.3
+    skills_cache_ttl: float = 300.0
 
 
 class ContextConfig(BaseModel):
@@ -154,13 +200,24 @@ _DEFAULT_CONFIG_PATH = Path(__file__).parent / "config.yaml"
 
 
 def load_settings(path: Path | None = None) -> Settings:
-    """Load settings from a YAML file. Falls back to defaults if file is missing."""
+    """Load settings from a YAML file. Falls back to defaults if file is missing.
+
+    Model names are resolved from the MODEL_NAME env var preset,
+    then overridden by any explicit values in the YAML file.
+    """
     config_path = path or _DEFAULT_CONFIG_PATH
     if config_path.exists():
         with open(config_path) as f:
             data = yaml.safe_load(f) or {}
-        return Settings.model_validate(data)
-    return Settings()
+    else:
+        data = {}
+
+    # Apply model preset defaults, let YAML overrides win
+    preset_models = _default_models()
+    yaml_models = data.get("models", {})
+    data["models"] = {**preset_models, **yaml_models}
+
+    return Settings.model_validate(data)
 
 
 @lru_cache

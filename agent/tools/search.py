@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 
@@ -32,6 +33,11 @@ class SearchTool:
         if not query:
             return "ERROR: empty search query"
 
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._search_sync, query, input)
+
+    def _search_sync(self, query: str, original_input: str) -> str:
+        """Synchronous search logic, run in a thread executor."""
         matches: list[str] = []
         max_results = 20
         max_file_size = 1_000_000  # 1MB
@@ -76,9 +82,9 @@ class SearchTool:
                     matches.append(f"{rel}\n" + "\n".join(matching_lines))
 
         if not matches:
-            return f"No results found for '{input}'"
+            return f"No results found for '{original_input}'"
 
-        return f"Found {len(matches)} files matching '{input}':\n\n" + "\n\n".join(matches)
+        return f"Found {len(matches)} files matching '{original_input}':\n\n" + "\n\n".join(matches)
 
 
 def _factory() -> SearchTool:

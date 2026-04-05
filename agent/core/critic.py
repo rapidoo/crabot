@@ -122,7 +122,7 @@ class Critic:
             current_result = result
 
             for attempt in range(max_retries):
-                score = await self._score_step(step, current_result)
+                score = await self._score_step(step, current_result, high_stakes=(attempt > 0))
                 logger.info(
                     "Step %d score: %.1f (attempt %d/%d)",
                     step.id, score.final_score, attempt + 1, max_retries,
@@ -146,9 +146,9 @@ class Critic:
 
         return scored
 
-    async def _score_step(self, step: Step, result: StepResult) -> CriticScore:
+    async def _score_step(self, step: Step, result: StepResult, *, high_stakes: bool = False) -> CriticScore:
         """Score a single step result."""
-        model = self._router.select("critic")
+        model = self._router.select("critic", high_stakes=high_stakes)
         sampling = self._router.sampling("critic")
         thinking = self._router.thinking_enabled("critic")
 

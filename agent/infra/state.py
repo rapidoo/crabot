@@ -23,6 +23,7 @@ class StateManager:
         self._path = Path(state_file)
         self._cursor: int = 0
         self._plan: Plan | None = None
+        self._user_input: str = ""
 
     @property
     def cursor(self) -> int:
@@ -37,10 +38,11 @@ class StateManager:
         """Check if there's a saved state to resume from."""
         return self._path.exists()
 
-    def save_plan(self, plan: Plan) -> None:
+    def save_plan(self, plan: Plan, user_input: str = "") -> None:
         """Save a new plan and reset cursor to 0."""
         self._plan = plan
         self._cursor = 0
+        self._user_input = user_input
         self._persist()
         logger.info("State: saved plan with %d steps", len(plan.steps))
 
@@ -50,8 +52,8 @@ class StateManager:
         self._persist()
         logger.debug("State: cursor advanced to step %d", step_id)
 
-    def load_state(self) -> tuple[Plan, int] | None:
-        """Load saved state. Returns (plan, resume_from_step_id) or None."""
+    def load_state(self) -> tuple[Plan, int, str] | None:
+        """Load saved state. Returns (plan, resume_from_step_id, user_input) or None."""
         if not self._path.exists():
             return None
 
@@ -59,14 +61,16 @@ class StateManager:
             data = json.loads(self._path.read_text(encoding="utf-8"))
             plan = Plan.model_validate(data["plan"])
             cursor = data.get("cursor", 0)
+            user_input = data.get("user_input", "")
             self._plan = plan
             self._cursor = cursor
+            self._user_input = user_input
             logger.info(
                 "State: loaded plan (%d steps), resuming from step %d",
                 len(plan.steps), cursor + 1,
             )
-            return plan, cursor
-        except (json.JSONDecodeError, KeyError, Exception) as exc:
+            return plan, cursor, user_input
+        except (json.JSONDecodeError, KeyError) as exc:
             logger.warning("State: corrupted state file, resetting: %s", exc)
             self.clear()
             return None
@@ -88,6 +92,7 @@ class StateManager:
         data = {
             "plan": self._plan.model_dump(),
             "cursor": self._cursor,
+            "user_input": self._user_input,
         }
 
         # Write to temp file in same directory, then atomic rename

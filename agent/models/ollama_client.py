@@ -100,6 +100,17 @@ class OllamaClient:
     def __init__(self, base_url: str = "http://localhost:11434", timeout: float = 300.0):
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
+        self._client = httpx.AsyncClient(timeout=self._timeout)
+
+    async def close(self) -> None:
+        """Close the underlying HTTP client."""
+        await self._client.aclose()
+
+    async def __aenter__(self) -> OllamaClient:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self.close()
 
     # -- public API ----------------------------------------------------------
 
@@ -194,8 +205,7 @@ class OllamaClient:
 
     async def _post(self, path: str, payload: dict) -> dict:
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(f"{self._base_url}{path}", json=payload)
+            resp = await self._client.post(f"{self._base_url}{path}", json=payload)
         except httpx.ConnectError as exc:
             raise OllamaConnectionError(
                 f"Cannot connect to Ollama at {self._base_url}"
@@ -210,18 +220,17 @@ class OllamaClient:
 
     async def _post_stream(self, path: str, payload: dict) -> AsyncIterator[dict]:
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                async with client.stream(
-                    "POST", f"{self._base_url}{path}", json=payload
-                ) as resp:
-                    if resp.status_code == 404:
-                        raise OllamaModelNotFound(
-                            f"Model not found: {payload.get('model')}"
-                        )
-                    resp.raise_for_status()
-                    async for line in resp.aiter_lines():
-                        if line.strip():
-                            yield json.loads(line)
+            async with self._client.stream(
+                "POST", f"{self._base_url}{path}", json=payload
+            ) as resp:
+                if resp.status_code == 404:
+                    raise OllamaModelNotFound(
+                        f"Model not found: {payload.get('model')}"
+                    )
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if line.strip():
+                        yield json.loads(line)
         except httpx.ConnectError as exc:
             raise OllamaConnectionError(
                 f"Cannot connect to Ollama at {self._base_url}"

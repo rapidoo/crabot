@@ -61,7 +61,7 @@ class FileIOTool:
         if not path.is_absolute():
             path = self._root / path
         resolved = path.resolve()
-        if not str(resolved).startswith(str(self._root)):
+        if not resolved.is_relative_to(self._root):
             return None
         return resolved
 

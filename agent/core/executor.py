@@ -18,10 +18,9 @@ from agent.schemas import Plan, Step, StepResult
 
 from agent.tools.registry import get_tool, discover_tools
 
-# Auto-discover all tools (scans agent/tools/ and agent/tools/custom/)
-discover_tools()
-
 logger = logging.getLogger(__name__)
+
+_tools_discovered = False
 
 
 class Executor:
@@ -39,6 +38,11 @@ class Executor:
         settings: Settings | None = None,
         personality: Personality | None = None,
     ):
+        global _tools_discovered
+        if not _tools_discovered:
+            discover_tools()
+            _tools_discovered = True
+
         self._settings = settings or get_settings()
         self._client = client or OllamaClient(
             base_url=self._settings.models.ollama_base_url
@@ -291,10 +295,10 @@ class Executor:
         sot_threshold = self._settings.skeleton.token_threshold
         if (
             self._settings.skeleton.enabled
-            and len(step.expected_output) > 50  # heuristic: long expected output
-            and "comprehensive" in step.input.lower()
-            or "detailed" in step.input.lower()
-            or "guide" in step.input.lower()
+            and len(step.expected_output) > sot_threshold
+            and ("comprehensive" in step.input.lower()
+                 or "detailed" in step.input.lower()
+                 or "guide" in step.input.lower())
         ):
             logger.info("Step %d: SoT activated (long output expected)", step.id)
             return await self.execute_sot(step)

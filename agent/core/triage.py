@@ -54,7 +54,7 @@ class Triage:
                 {"role": "user", "content": user_input},
             ],
             sampling=sampling,
-            thinking=False,
+            thinking=self._router.thinking_enabled("triage"),
         )
 
         raw = resp.content.strip().lower()

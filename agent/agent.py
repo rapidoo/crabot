@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -16,6 +17,7 @@ from agent.core.executor import Executor
 from agent.core.critic import Critic
 from agent.infra.state import StateManager
 from agent.memory.neo4j_client import MemoryClient
+from agent.memory.embedder import Embedder
 from agent.memory.entity_extractor import EntityExtractor
 from agent.intelligence.skill_injector import get_skill_context
 from agent.personality.loader import load_personality, Personality
@@ -29,18 +31,20 @@ class Agent:
 
     def __init__(self, settings: Settings | None = None):
         self._settings = settings or get_settings()
-        client = OllamaClient(base_url=self._settings.models.ollama_base_url)
+        self._client = OllamaClient(base_url=self._settings.models.ollama_base_url)
         router = ModelRouter(self._settings)
 
         self._personality = load_personality()
-        self._triage = Triage(client=client, router=router)
-        self._planner = Planner(client=client, router=router, personality=self._personality)
-        self._executor = Executor(client=client, router=router, settings=self._settings, personality=self._personality)
-        self._critic = Critic(client=client, router=router, executor=self._executor)
+        self._triage = Triage(client=self._client, router=router)
+        self._planner = Planner(client=self._client, router=router, personality=self._personality)
+        self._executor = Executor(client=self._client, router=router, settings=self._settings, personality=self._personality)
+        self._critic = Critic(client=self._client, router=router, executor=self._executor)
         self._state = StateManager(self._settings.recovery.state_file)
         self._memory = MemoryClient()
-        self._entity_extractor = EntityExtractor(client=client, router=router)
+        self._embedder = Embedder()
+        self._entity_extractor = EntityExtractor(client=self._client, router=router)
         self._last_episode_id: str | None = None
+        self._cached_input_entities: list[dict[str, str]] | None = None
 
     @property
     def last_episode_id(self) -> str | None:
@@ -61,6 +65,7 @@ class Agent:
 
     async def shutdown(self) -> None:
         """Clean up connections."""
+        await self._client.close()
         await self._memory.close()
 
     async def run(self, user_input: str) -> AgentResult:
@@ -72,11 +77,15 @@ class Agent:
         resume_after = 0
         saved = self._state.load_state()
         if saved is not None:
-            plan, resume_after = saved
-            logger.info("Resuming previous plan from step %d", resume_after + 1)
-            return await self._execute_pipeline(
-                user_input, plan, resume_after, start
-            )
+            plan, resume_after, saved_input = saved
+            if saved_input and saved_input != user_input:
+                logger.warning("Input changed since saved plan — discarding old state")
+                self._state.clear()
+            else:
+                logger.info("Resuming previous plan from step %d", resume_after + 1)
+                return await self._execute_pipeline(
+                    user_input, plan, resume_after, start
+                )
 
         # Phase 0: Triage
         logger.info("Phase 0: Triage...")
@@ -104,12 +113,20 @@ class Agent:
             return agent_result
 
         # Phase 0.5: Memory read + skill injection
+        self._cached_input_entities = None
         context_parts: list[str] = []
         if self._memory.available:
             logger.info("Phase 0.5: Memory read...")
-            entities = await self._entity_extractor.extract(user_input)
+            # Run entity extraction and embedding in parallel
+            entities_task = self._entity_extractor.extract(user_input)
+            embed_task = self._embedder.embed(user_input)
+            entities, query_embedding = await asyncio.gather(entities_task, embed_task)
+            self._cached_input_entities = entities
             entity_names = [e["name"] for e in entities]
-            episode_ctx = await self._memory.get_context(entity_names)
+            episode_ctx = await self._memory.get_context(
+                entity_names,
+                query_embedding=query_embedding or None,
+            )
             if episode_ctx:
                 context_parts.append(episode_ctx)
                 logger.info("Memory: injecting episode context (%d chars)", len(episode_ctx))
@@ -139,7 +156,7 @@ class Agent:
 
         # Save plan for crash recovery
         if self._settings.recovery.persist_cursor:
-            self._state.save_plan(plan)
+            self._state.save_plan(plan, user_input=user_input)
 
         # Phase 2: Execute
         logger.info("Phase 2: Executing...")
@@ -183,14 +200,28 @@ class Agent:
                 else 0.0
             )
 
-            # Collect text for entity extraction
-            all_text = user_input + "\n" + "\n".join(
-                r.result.output[:500] for r in result.results
-            )
-            entities = await self._entity_extractor.extract(all_text)
+            # Extract entities: reuse cached input entities, only extract from outputs
+            output_text = "\n".join(r.result.output[:500] for r in result.results)
+            output_entities = await self._entity_extractor.extract(output_text)
+
+            if self._cached_input_entities is not None:
+                # Merge cached input entities + new output entities (dedup by name)
+                seen: dict[str, dict[str, str]] = {}
+                for e in self._cached_input_entities:
+                    seen[e["name"]] = e
+                for e in output_entities:
+                    seen[e["name"]] = e  # output version wins on duplicate
+                entities = list(seen.values())
+            else:
+                # Fallback: extract from everything (memory was unavailable during read)
+                all_text = user_input + "\n" + output_text
+                entities = await self._entity_extractor.extract(all_text)
 
             summary = f"Goal: {result.goal}. "
             summary += f"{len(result.results)} steps, avg score {avg_score:.1f}."
+
+            # Generate embedding for the episode summary
+            embedding = await self._embedder.embed(summary)
 
             episode_id = await self._memory.persist_episode(
                 goal=result.goal,
@@ -198,6 +229,7 @@ class Agent:
                 score=avg_score,
                 entities=entities,
                 previous_episode_id=self._last_episode_id,
+                embedding=embedding or None,
             )
             if episode_id:
                 self._last_episode_id = episode_id

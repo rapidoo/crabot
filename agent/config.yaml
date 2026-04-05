@@ -1,10 +1,6 @@
+# Model names are resolved from MODEL_NAME env var (GEMMA4 | MISTRAL).
+# Override individual models here if needed.
 models:
-  triage:         gemma4
-  planner:        gemma4:26b
-  executor:       gemma4:26b
-  executor_draft: gemma4
-  critic:         gemma4:31b
-  critic_light:   gemma4:26b
   ollama_base_url: http://localhost:11434
 
 sampling:
@@ -48,7 +44,12 @@ memory:
   neo4j_password:   ""              # Loaded from .env NEO4J_PASSWORD
   context_k:        5
   write_threshold:  5.0
+  read_threshold:   6.5
   entity_extraction: true
+  embedding_model:  nomic-embed-text
+  embedding_dimensions: 768
+  vector_weight:    0.7
+  lexical_weight:   0.3
 
 context:
   max_tokens_per_call: 32768

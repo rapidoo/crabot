@@ -11,6 +11,9 @@ FOR (e:Entity) REQUIRE e.name IS UNIQUE;
 CREATE CONSTRAINT skill_name IF NOT EXISTS
 FOR (s:Skill) REQUIRE s.name IS UNIQUE;
 
+CREATE CONSTRAINT goal_id IF NOT EXISTS
+FOR (g:Goal) REQUIRE g.id IS UNIQUE;
+
 // Indexes for query performance
 CREATE INDEX episode_score IF NOT EXISTS
 FOR (ep:Episode) ON (ep.score);

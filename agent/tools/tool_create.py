@@ -6,6 +6,7 @@ Generated tools are saved in agent/tools/custom/ and auto-discovered on next sta
 
 from __future__ import annotations
 
+import ast
 import importlib
 import logging
 import re
@@ -18,6 +19,26 @@ from agent.tools.registry import register_tool
 logger = logging.getLogger(__name__)
 
 CUSTOM_TOOLS_DIR = Path(__file__).parent / "custom"
+
+_FORBIDDEN_MODULES = {"os", "subprocess", "shutil", "socket", "sys", "pathlib", "ctypes"}
+_FORBIDDEN_BUILTINS = {"eval", "exec", "__import__", "compile", "globals", "locals"}
+
+
+def _validate_ast(source: str) -> str | None:
+    """Return error message if source contains forbidden constructs, else None."""
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] in _FORBIDDEN_MODULES:
+                    return f"Forbidden import: {alias.name}"
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if node.module.split(".")[0] in _FORBIDDEN_MODULES:
+                return f"Forbidden import: {node.module}"
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in _FORBIDDEN_BUILTINS:
+                return f"Forbidden builtin: {node.func.id}"
+    return None
 
 _TOOL_TEMPLATE = '''\
 """Auto-generated tool: {name} — {description}"""
@@ -115,6 +136,11 @@ class ToolCreateTool:
         except SyntaxError as exc:
             return f"ERROR: generated code has syntax error: {exc}"
 
+        # Validate AST for forbidden constructs
+        ast_error = _validate_ast(source)
+        if ast_error:
+            return f"ERROR: {ast_error}"
+
         # Write to custom tools directory
         CUSTOM_TOOLS_DIR.mkdir(parents=True, exist_ok=True)
         module_path = CUSTOM_TOOLS_DIR / f"{tool_name}.py"
@@ -178,9 +204,10 @@ class ToolCreateTool:
     def _shell_wrapper(self, command: str) -> str:
         """Generate a run body that executes a shell command."""
         return textwrap.dedent(f'''\
-        import asyncio
-        proc = await asyncio.create_subprocess_shell(
-            f"{command.strip()} {{input}}",
+        import asyncio, shlex
+        args = shlex.split({command.strip()!r}) + [input]
+        proc = await asyncio.create_subprocess_exec(
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
