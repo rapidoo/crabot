@@ -23,6 +23,7 @@ from agent.memory.entity_extractor import EntityExtractor
 from agent.intelligence.skill_injector import get_skill_context
 from agent.intelligence.action_applier import ActionApplier
 from agent.intelligence.prompt_manager import PromptManager
+from agent.core.approval import ApprovalGate
 from agent.personality.loader import load_personality, Personality
 from agent.schemas import AgentResult, ScoredResult, CriticScore, StepResult, Plan
 
@@ -35,7 +36,11 @@ logger = logging.getLogger(__name__)
 class Agent:
     """Triage → Memory Read → Plan → Execute → Critique → Memory Write."""
 
-    def __init__(self, settings: Settings | None = None):
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        approval_gate: ApprovalGate | None = None,
+    ):
         self._settings = settings or get_settings()
         self._client = OllamaClient(base_url=self._settings.models.ollama_base_url)
         router = ModelRouter(self._settings)
@@ -50,7 +55,10 @@ class Agent:
 
         self._triage = Triage(client=self._client, router=router)
         self._planner = Planner(client=self._client, router=router, personality=self._personality, prompt_manager=self._prompt_manager)
-        self._executor = Executor(client=self._client, router=router, settings=self._settings, personality=self._personality)
+        self._executor = Executor(
+            client=self._client, router=router, settings=self._settings,
+            personality=self._personality, approval_gate=approval_gate,
+        )
         self._critic = Critic(client=self._client, router=router, executor=self._executor, prompt_manager=self._prompt_manager)
         self._state = StateManager(self._settings.recovery.state_file)
         self._embedder = Embedder()

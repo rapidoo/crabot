@@ -126,6 +126,19 @@ class ContextConfig(BaseModel):
     max_tokens_per_call: int = 32768
     skeleton_threshold: int = 500
     trace_in_context: bool = True
+    compression_threshold: float = 0.50
+    compression_protect_last_n: int = 4
+
+
+class ApprovalConfig(BaseModel):
+    enabled: bool = True
+    dangerous_tools: list[str] = ["code", "tool_create"]
+
+
+class TruncationConfig(BaseModel):
+    enabled: bool = True
+    max_chars: int = 50_000
+    tail_chars: int = 2_000
 
 
 class TelegramConfig(BaseModel):
@@ -209,6 +222,8 @@ class Settings(BaseModel):
     adaptive: AdaptiveConfig = AdaptiveConfig()
     reflection: ReflectionConfig = ReflectionConfig()
     evolution: EvolutionConfig = EvolutionConfig()
+    approval: ApprovalConfig = ApprovalConfig()
+    truncation: TruncationConfig = TruncationConfig()
 
 
 _DEFAULT_CONFIG_PATH = Path(__file__).parent / "config.yaml"
