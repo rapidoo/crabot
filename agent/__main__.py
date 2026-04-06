@@ -61,6 +61,7 @@ def _print_help() -> None:
     print("  /stats       Show performance metrics")
     print("  /goals       List active goals")
     print("  /goal <desc> Create a new goal")
+    print("  /clean       Clear conversation history")
     print("  /quit        Exit")
 
 
@@ -111,6 +112,7 @@ def _run_repl() -> None:
 async def _repl_loop(settings, identity) -> None:
     agent = Agent(settings)
     await agent.initialize()
+    conversation_history: list[dict[str, str]] = []
 
     try:
         while True:
@@ -125,15 +127,26 @@ async def _repl_loop(settings, identity) -> None:
 
             # Slash commands
             if user_input.startswith("/"):
-                handled = await _handle_command(user_input, agent)
+                handled = await _handle_command(user_input, agent, conversation_history)
                 if handled == "quit":
                     break
                 continue
 
-            # Run the agent
+            # Run the agent with conversation history
             try:
-                result = await agent.run(user_input)
+                result = await agent.run(
+                    user_input, conversation_history=conversation_history
+                )
                 _print_result(result, compact=True)
+
+                # Update conversation history
+                conversation_history.append({"role": "user", "content": user_input})
+                assistant_output = "\n".join(
+                    r.result.output[:300] for r in result.results
+                )
+                conversation_history.append({"role": "assistant", "content": assistant_output})
+                # Keep last 20 turns
+                conversation_history[:] = conversation_history[-20:]
             except Exception as exc:
                 print(f"\n  Error: {exc}\n")
 
@@ -141,7 +154,9 @@ async def _repl_loop(settings, identity) -> None:
         await agent.shutdown()
 
 
-async def _handle_command(cmd: str, agent: Agent) -> str | None:
+async def _handle_command(
+    cmd: str, agent: Agent, conversation_history: list[dict[str, str]] | None = None,
+) -> str | None:
     """Handle REPL slash commands. Returns 'quit' to exit."""
     parts = cmd.split(maxsplit=1)
     command = parts[0].lower()
@@ -156,9 +171,18 @@ async def _handle_command(cmd: str, agent: Agent) -> str | None:
         print("  /stats       Show performance metrics")
         print("  /goals       List active goals")
         print("  /goal <desc> Create a new goal")
+        print("  /clean       Clear conversation history")
         print("  /good        Validate last result")
         print("  /bad [why]   Reject last result")
         print("  /quit        Exit")
+
+    elif command == "/clean":
+        if conversation_history is not None:
+            count = len(conversation_history)
+            conversation_history.clear()
+            print(f"  Conversation history cleared ({count} messages).")
+        else:
+            print("  No conversation history to clear.")
 
     elif command == "/tools":
         from agent.tools.registry import list_tools_with_descriptions

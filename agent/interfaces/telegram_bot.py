@@ -90,6 +90,10 @@ class TelegramBot:
         # Track last progress edit time per job (for throttling)
         self._last_edit: dict[str, float] = {}
 
+        # Conversation history per chat_id (last N turns)
+        self._chat_history: dict[int, list[dict[str, str]]] = {}
+        self._max_history_turns = 20
+
         # Register callbacks
         job_manager.set_progress_callback(self._on_job_progress)
         job_manager.set_completion_callback(self._on_job_complete)
@@ -111,6 +115,7 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("status", self._handle_status))
         self._app.add_handler(CommandHandler("jobs", self._handle_status))
         self._app.add_handler(CommandHandler("cancel", self._handle_cancel))
+        self._app.add_handler(CommandHandler("clean", self._handle_clean))
         self._app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
         )
@@ -167,6 +172,7 @@ class TelegramBot:
             "Commands:\n"
             "/status — see running jobs\n"
             "/cancel [job_id] — cancel a running job\n"
+            "/clean — clear conversation history\n"
             "/good — validate the last result\n"
             "/bad [reason] — reject the last result\n"
             "/stats — show performance metrics\n\n"
@@ -191,14 +197,25 @@ class TelegramBot:
 
         logger.info("Message from %s (%d): %s", user_name, user_id, text[:80])
 
+        chat_id = update.effective_chat.id
+
+        # Get conversation history for this chat
+        history = self._chat_history.get(chat_id, [])
+
+        # Add user message to history
+        if chat_id not in self._chat_history:
+            self._chat_history[chat_id] = []
+        self._chat_history[chat_id].append({"role": "user", "content": text})
+
         # Immediate acknowledgment
         ack = await update.message.reply_text("Je travaille dessus...")
 
-        # Submit background job (returns immediately)
+        # Submit background job with conversation history
         job = await self._job_manager.submit(
             user_input=text,
-            chat_id=update.effective_chat.id,
+            chat_id=chat_id,
             message_id=ack.message_id,
+            conversation_history=list(history),  # Pass copy of history before this message
         )
         logger.info("Job %s submitted for %s", job.id, user_name)
 
@@ -263,6 +280,20 @@ class TelegramBot:
             await update.message.reply_text(f"Job {job_id[:8]} annulé.")
         else:
             await update.message.reply_text(f"Job {job_id[:8]} déjà terminé.")
+
+    async def _handle_clean(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Clear conversation history for this chat."""
+        if not self._is_allowed(update.effective_user.id):
+            return
+        chat_id = update.effective_chat.id
+        count = len(self._chat_history.get(chat_id, []))
+        self._chat_history.pop(chat_id, None)
+        await update.message.reply_text(
+            f"Conversation history cleared ({count} messages removed)."
+        )
+        logger.info("Chat history cleared for chat %d (%d messages)", chat_id, count)
 
     async def _handle_good(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -369,6 +400,19 @@ class TelegramBot:
             response = self._format_result(job.result)
             for chunk in _split_message(response, self._max_len):
                 await self._app.bot.send_message(chat_id=job.chat_id, text=chunk)
+
+            # Add assistant response to conversation history
+            assistant_output = "\n".join(
+                r.result.output[:300] for r in job.result.results
+            )
+            if job.chat_id in self._chat_history:
+                self._chat_history[job.chat_id].append(
+                    {"role": "assistant", "content": assistant_output}
+                )
+                # Trim history to max turns
+                self._chat_history[job.chat_id] = (
+                    self._chat_history[job.chat_id][-self._max_history_turns:]
+                )
 
             logger.info(
                 "Job %s result sent: %d steps, scores=%s",
