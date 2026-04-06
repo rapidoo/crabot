@@ -20,6 +20,7 @@ class SpiderSearchTool:
     def __init__(self, api_key: str | None = None, max_results: int = 5):
         self._api_key = api_key or os.environ.get("SPIDER_API_KEY", "")
         self._max_results = max_results
+        self._timeout = 60.0
 
     @property
     def name(self) -> str:
@@ -53,11 +54,11 @@ class SpiderSearchTool:
     async def _search(self, query: str) -> str:
         """Search the web via Spider.cloud."""
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(
                     f"{self.API_URL}/search",
                     json={
-                        "query": query,
+                        "search": query,
                         "limit": self._max_results,
                         "return_format": "markdown",
                     },
@@ -69,22 +70,22 @@ class SpiderSearchTool:
                 resp.raise_for_status()
                 data = resp.json()
 
-            if not data:
+            results = data.get("content", []) if isinstance(data, dict) else data
+            if not results:
                 return f"No results found for '{query}'"
 
             lines: list[str] = [f"Search results for '{query}':\n"]
-            for i, r in enumerate(data, 1):
+            for i, r in enumerate(results, 1):
                 title = r.get("title", "No title")
                 url = r.get("url", "")
-                content = r.get("content", "")
-                # Truncate content to keep response manageable
-                if len(content) > 500:
-                    content = content[:500] + "..."
+                description = r.get("description", "")
+                if len(description) > 500:
+                    description = description[:500] + "..."
                 lines.append(f"{i}. **{title}**")
                 if url:
                     lines.append(f"   {url}")
-                if content:
-                    lines.append(f"   {content}")
+                if description:
+                    lines.append(f"   {description}")
                 lines.append("")
 
             return "\n".join(lines).strip()
@@ -99,7 +100,7 @@ class SpiderSearchTool:
     async def _scrape(self, url: str) -> str:
         """Scrape a single URL via Spider.cloud."""
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(
                     f"{self.API_URL}/crawl",
                     json={
