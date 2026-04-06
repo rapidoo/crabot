@@ -21,10 +21,33 @@ from agent.tools.registry import register_tool
 
 logger = logging.getLogger(__name__)
 
-CUSTOM_TOOLS_DIR = Path(__file__).parent / "custom"
+def _get_tools_dir() -> Path:
+    """Return the tools output directory from config, defaulting to custom/."""
+    try:
+        from agent.config import get_settings
+        settings = get_settings()
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        return repo_root / settings.evolution.tools_dir
+    except Exception:
+        return Path(__file__).parent / "custom"
 
-_FORBIDDEN_MODULES = {
-    "os", "subprocess", "shutil", "socket", "sys", "pathlib", "ctypes",
+
+def _is_trusted() -> bool:
+    """Check if trusted mode is enabled (relaxed AST validation)."""
+    try:
+        from agent.config import get_settings
+        return get_settings().evolution.trusted_tools
+    except Exception:
+        return False
+
+
+# Modules always forbidden (dangerous regardless of trust level)
+_ALWAYS_FORBIDDEN_MODULES = {
+    "subprocess", "socket", "ctypes",
+}
+# Modules forbidden only in untrusted mode
+_UNTRUSTED_FORBIDDEN_MODULES = {
+    "os", "shutil", "sys", "pathlib",
     "http", "urllib", "requests", "httpx", "aiohttp",
 }
 _FORBIDDEN_BUILTINS = {"eval", "exec", "__import__", "compile", "globals", "locals"}
@@ -32,20 +55,25 @@ _FORBIDDEN_BUILTINS = {"eval", "exec", "__import__", "compile", "globals", "loca
 
 def _validate_ast(source: str) -> str | None:
     """Return error message if source contains forbidden constructs, else None."""
+    trusted = _is_trusted()
+    forbidden_modules = set(_ALWAYS_FORBIDDEN_MODULES)
+    if not trusted:
+        forbidden_modules |= _UNTRUSTED_FORBIDDEN_MODULES
+
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name.split(".")[0] in _FORBIDDEN_MODULES:
+                if alias.name.split(".")[0] in forbidden_modules:
                     return f"Forbidden import: {alias.name}"
         elif isinstance(node, ast.ImportFrom) and node.module:
-            if node.module.split(".")[0] in _FORBIDDEN_MODULES:
+            if node.module.split(".")[0] in forbidden_modules:
                 return f"Forbidden import: {node.module}"
         elif isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id in _FORBIDDEN_BUILTINS:
                 return f"Forbidden builtin: {node.func.id}"
-            # Block open() with write mode
-            if isinstance(node.func, ast.Name) and node.func.id == "open":
+            # Block open() with write mode (only in untrusted mode)
+            if not trusted and isinstance(node.func, ast.Name) and node.func.id == "open":
                 for kw in node.keywords:
                     if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
                         if "w" in str(kw.value.value) or "a" in str(kw.value.value):
@@ -102,9 +130,10 @@ def _to_class_name(name: str) -> str:
     return "".join(p.capitalize() for p in parts) + "Tool"
 
 
-def _get_next_version(tool_name: str) -> int:
+def _get_next_version(tool_name: str, tools_dir: Path | None = None) -> int:
     """Determine the next version number for a tool by scanning .bak files."""
-    existing = list(CUSTOM_TOOLS_DIR.glob(f"{tool_name}_v*.py.bak"))
+    directory = tools_dir or _get_tools_dir()
+    existing = list(directory.glob(f"{tool_name}_v*.py.bak"))
     if not existing:
         return 1
     versions = []
@@ -174,22 +203,32 @@ class ToolCreateTool:
             return f"ERROR: {ast_error}"
 
         # Version the previous tool if it exists
-        CUSTOM_TOOLS_DIR.mkdir(parents=True, exist_ok=True)
-        module_path = CUSTOM_TOOLS_DIR / f"{tool_name}.py"
+        tools_dir = _get_tools_dir()
+        tools_dir.mkdir(parents=True, exist_ok=True)
+        module_path = tools_dir / f"{tool_name}.py"
         version_info = ""
         if module_path.exists():
-            version = _get_next_version(tool_name)
-            bak_path = CUSTOM_TOOLS_DIR / f"{tool_name}_v{version}.py.bak"
+            version = _get_next_version(tool_name, tools_dir)
+            bak_path = tools_dir / f"{tool_name}_v{version}.py.bak"
             shutil.copy2(module_path, bak_path)
             version_info = f"\nPrevious version saved as: {bak_path.name}"
             logger.info("Versioned %s → %s", module_path.name, bak_path.name)
 
-        # Write to custom tools directory
+        # Write to tools directory
         module_path.write_text(source, encoding="utf-8")
+
+        # Determine module prefix from tools_dir path
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        try:
+            rel = tools_dir.resolve().relative_to(repo_root)
+            module_prefix = str(rel).replace("/", ".").replace("\\", ".")
+        except ValueError:
+            # tools_dir is outside the repo (e.g. during tests)
+            module_prefix = "agent.tools.custom"
 
         # Load and register immediately
         try:
-            module_name = f"agent.tools.custom.{tool_name}"
+            module_name = f"{module_prefix}.{tool_name}"
             if module_name in importlib.import_module("sys").modules:
                 importlib.reload(importlib.import_module(module_name))
             else:

@@ -67,7 +67,9 @@ class FileIOTool:
 
 
 def _factory() -> FileIOTool:
-    return FileIOTool()
+    # Use repo root as allowed_root so the agent can access its own codebase
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    return FileIOTool(allowed_root=repo_root)
 
 
 register_tool("file", _factory)

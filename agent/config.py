@@ -182,6 +182,12 @@ class EvolutionConfig(BaseModel):
     overrides_file: str = "./state/overrides.yaml"
     mutations_log: str = "./state/mutations.jsonl"
     protected_roles: list[str] = ["critic"]
+    tools_dir: str = "agent/tools/custom"
+    trusted_tools: bool = False
+    protected_files: list[str] = [
+        "agent/agent.py",
+        "agent/config.py",
+    ]
 
 
 class Settings(BaseModel):

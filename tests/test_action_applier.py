@@ -145,3 +145,50 @@ class TestActionApplier:
     async def test_unknown_action_ignored(self, applier):
         mutations = await applier.apply([{"type": "unknown_action"}])
         assert len(mutations) == 0
+
+    @pytest.mark.asyncio
+    async def test_modify_source_creates_file(self, applier, tmp_path):
+        target = tmp_path / "test_file.py"
+        target.write_text("original content", encoding="utf-8")
+        # Use a relative path that resolves within repo
+        from unittest.mock import patch
+        repo_root = tmp_path
+        with patch("agent.intelligence.action_applier.Path.__file__", create=True):
+            # Directly test _apply_modify_source with absolute path trick
+            import agent.intelligence.action_applier as aa
+            old_file = aa.__file__
+            # Temporarily make the applier think repo_root is tmp_path
+            # by setting the file to tmp_path/agent/intelligence/action_applier.py
+            fake_path = tmp_path / "agent" / "intelligence" / "action_applier.py"
+            fake_path.parent.mkdir(parents=True, exist_ok=True)
+            fake_path.touch()
+            aa.__file__ = str(fake_path)
+            try:
+                mutations = await applier.apply([{
+                    "type": "modify_source",
+                    "target": "test_file.py",
+                    "new_value": "new content",
+                    "reason": "test modification",
+                }])
+                assert len(mutations) == 1
+                assert mutations[0].action_type == "modify_source"
+                assert target.read_text() == "new content"
+                # Backup should exist
+                assert target.with_suffix(".py.bak").exists()
+                assert target.with_suffix(".py.bak").read_text() == "original content"
+            finally:
+                aa.__file__ = old_file
+
+    @pytest.mark.asyncio
+    async def test_modify_source_blocks_protected(self, applier, settings):
+        settings.evolution.protected_files = ["agent/agent.py"]
+        from unittest.mock import patch as mp
+        import agent.intelligence.action_applier as aa
+        fake_root = Path(aa.__file__).resolve().parent.parent.parent
+        mutations = await applier.apply([{
+            "type": "modify_source",
+            "target": "agent/agent.py",
+            "new_value": "hacked",
+            "reason": "should be blocked",
+        }])
+        assert len(mutations) == 0
