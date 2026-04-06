@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from agent.agent import Agent
     from agent.infra.metrics import MetricsCollector
+    from agent.intelligence.action_applier import ActionApplier
     from agent.memory.neo4j_client import MemoryClient
 
 logger = logging.getLogger(__name__)
@@ -41,12 +42,14 @@ async def reflect(
     agent: Agent,
     metrics: MetricsCollector,
     memory: MemoryClient | None = None,
+    action_applier: ActionApplier | None = None,
     last_n: int = 50,
 ) -> dict[str, Any]:
     """Run one reflection cycle.
 
     Returns the parsed reflection result (insights + actions).
     Persists the reflection as a meta-episode in Neo4j if available.
+    If action_applier is provided and auto_apply is enabled, applies actions.
     """
     summary = metrics.summary(last_n=last_n)
 
@@ -84,6 +87,16 @@ async def reflect(
         logger.info("  Insight: %s", insight)
     for action in reflection.get("actions", []):
         logger.info("  Action: %s", action)
+
+    # Apply actions if auto_apply is enabled
+    actions = reflection.get("actions", [])
+    if action_applier and actions:
+        mutations = await action_applier.apply(actions)
+        if mutations:
+            logger.info("Reflection: %d mutations applied", len(mutations))
+            for m in mutations:
+                logger.info("  Applied: %s on %s (%s → %s)",
+                            m.action_type, m.target, m.previous_value, m.new_value)
 
     # Persist as meta-episode
     if memory and memory.available:

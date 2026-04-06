@@ -90,6 +90,7 @@ class Critic:
         client: OllamaClient | None = None,
         router: ModelRouter | None = None,
         executor: object | None = None,
+        prompt_manager: object | None = None,
     ):
         settings = get_settings()
         self._client = client or OllamaClient(
@@ -97,6 +98,7 @@ class Critic:
         )
         self._router = router or ModelRouter(settings)
         self._executor = executor
+        self._prompt_manager = prompt_manager
         self._settings = settings
         adaptive_cfg = getattr(settings, "adaptive", None)
         if adaptive_cfg and adaptive_cfg.enabled:
@@ -146,14 +148,24 @@ class Critic:
 
         return scored
 
+    async def _get_critic_prompt(self) -> str:
+        """Get the critic prompt, checking PromptManager for an evolved version."""
+        if self._prompt_manager and hasattr(self._prompt_manager, "get_prompt"):
+            try:
+                return await self._prompt_manager.get_prompt("critic", CRITIC_SYSTEM_PROMPT)
+            except Exception:
+                pass
+        return CRITIC_SYSTEM_PROMPT
+
     async def _score_step(self, step: Step, result: StepResult, *, high_stakes: bool = False) -> CriticScore:
         """Score a single step result."""
         model = self._router.select("critic", high_stakes=high_stakes)
         sampling = self._router.sampling("critic")
         thinking = self._router.thinking_enabled("critic")
 
+        critic_prompt = await self._get_critic_prompt()
         messages = [
-            {"role": "system", "content": CRITIC_SYSTEM_PROMPT},
+            {"role": "system", "content": critic_prompt},
             {
                 "role": "user",
                 "content": (

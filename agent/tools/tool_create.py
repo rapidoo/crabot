@@ -2,14 +2,17 @@
 
 The agent can use this tool to create new tools that persist across sessions.
 Generated tools are saved in agent/tools/custom/ and auto-discovered on next startup.
+Supports versioning: previous versions are saved as .bak files.
 """
 
 from __future__ import annotations
 
 import ast
+import asyncio
 import importlib
 import logging
 import re
+import shutil
 import textwrap
 from pathlib import Path
 
@@ -20,7 +23,10 @@ logger = logging.getLogger(__name__)
 
 CUSTOM_TOOLS_DIR = Path(__file__).parent / "custom"
 
-_FORBIDDEN_MODULES = {"os", "subprocess", "shutil", "socket", "sys", "pathlib", "ctypes"}
+_FORBIDDEN_MODULES = {
+    "os", "subprocess", "shutil", "socket", "sys", "pathlib", "ctypes",
+    "http", "urllib", "requests", "httpx", "aiohttp",
+}
 _FORBIDDEN_BUILTINS = {"eval", "exec", "__import__", "compile", "globals", "locals"}
 
 
@@ -38,7 +44,19 @@ def _validate_ast(source: str) -> str | None:
         elif isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id in _FORBIDDEN_BUILTINS:
                 return f"Forbidden builtin: {node.func.id}"
+            # Block open() with write mode
+            if isinstance(node.func, ast.Name) and node.func.id == "open":
+                for kw in node.keywords:
+                    if kw.arg == "mode" and isinstance(kw.value, ast.Constant):
+                        if "w" in str(kw.value.value) or "a" in str(kw.value.value):
+                            return "Forbidden: open() with write mode"
+                # open() with positional mode argument
+                if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant):
+                    mode = str(node.args[1].value)
+                    if "w" in mode or "a" in mode:
+                        return "Forbidden: open() with write mode"
     return None
+
 
 _TOOL_TEMPLATE = '''\
 """Auto-generated tool: {name} — {description}"""
@@ -84,12 +102,26 @@ def _to_class_name(name: str) -> str:
     return "".join(p.capitalize() for p in parts) + "Tool"
 
 
+def _get_next_version(tool_name: str) -> int:
+    """Determine the next version number for a tool by scanning .bak files."""
+    existing = list(CUSTOM_TOOLS_DIR.glob(f"{tool_name}_v*.py.bak"))
+    if not existing:
+        return 1
+    versions = []
+    for p in existing:
+        match = re.search(rf"{tool_name}_v(\d+)\.py\.bak", p.name)
+        if match:
+            versions.append(int(match.group(1)))
+    return max(versions, default=0) + 1
+
+
 class ToolCreateTool:
     """Create new tools that persist across sessions.
 
     Input format (one of):
         name:<tool_name>|description:<desc>|code:<python_code_for_run_method>
         name:<tool_name>|description:<desc>|shell:<shell_command>
+        name:<tool_name>|description:<desc>|code:<code>|test:<test_input>
     """
 
     @property
@@ -100,7 +132,7 @@ class ToolCreateTool:
     def description(self) -> str:
         return (
             "Create a new persistent tool. "
-            "Input: name:<name>|description:<desc>|code:<async run body>"
+            "Input: name:<name>|description:<desc>|code:<async run body>|test:<optional test input>"
         )
 
     async def run(self, input: str) -> str:
@@ -141,9 +173,18 @@ class ToolCreateTool:
         if ast_error:
             return f"ERROR: {ast_error}"
 
-        # Write to custom tools directory
+        # Version the previous tool if it exists
         CUSTOM_TOOLS_DIR.mkdir(parents=True, exist_ok=True)
         module_path = CUSTOM_TOOLS_DIR / f"{tool_name}.py"
+        version_info = ""
+        if module_path.exists():
+            version = _get_next_version(tool_name)
+            bak_path = CUSTOM_TOOLS_DIR / f"{tool_name}_v{version}.py.bak"
+            shutil.copy2(module_path, bak_path)
+            version_info = f"\nPrevious version saved as: {bak_path.name}"
+            logger.info("Versioned %s → %s", module_path.name, bak_path.name)
+
+        # Write to custom tools directory
         module_path.write_text(source, encoding="utf-8")
 
         # Load and register immediately
@@ -158,12 +199,33 @@ class ToolCreateTool:
             module_path.unlink(missing_ok=True)
             return f"ERROR: tool loaded but failed to register: {exc}"
 
+        # Auto-test if test input provided
+        test_result = ""
+        test_input = spec.get("test", "")
+        if test_input:
+            test_result = await self._run_smoke_test(tool_name, test_input)
+
         logger.info("Tool created: %s → %s", tool_name, module_path)
         return (
             f"OK: tool '{tool_name}' created and registered.\n"
-            f"File: {module_path}\n"
+            f"File: {module_path}{version_info}\n"
             f"Available immediately and persists across restarts."
+            f"{test_result}"
         )
+
+    async def _run_smoke_test(self, tool_name: str, test_input: str) -> str:
+        """Run a quick smoke test on the newly created tool."""
+        from agent.tools.registry import get_tool
+        tool = get_tool(tool_name)
+        if tool is None:
+            return "\nSmoke test: SKIP (tool not found after registration)"
+        try:
+            result = await asyncio.wait_for(tool.run(test_input), timeout=10)
+            return f"\nSmoke test: PASS (output: {result[:200]})"
+        except asyncio.TimeoutError:
+            return "\nSmoke test: FAIL (timeout after 10s)"
+        except Exception as exc:
+            return f"\nSmoke test: FAIL ({exc})"
 
     def _parse_spec(self, input: str) -> dict[str, str]:
         """Parse name:...|description:...|code:... format."""
@@ -175,7 +237,7 @@ class ToolCreateTool:
 
         for part in parts:
             matched = False
-            for prefix in ("name:", "description:", "code:", "shell:"):
+            for prefix in ("name:", "description:", "code:", "shell:", "test:"):
                 if part.strip().startswith(prefix):
                     if current_key:
                         spec[current_key] = "|".join(current_val)

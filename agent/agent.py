@@ -21,6 +21,8 @@ from agent.memory.neo4j_client import MemoryClient
 from agent.memory.embedder import Embedder
 from agent.memory.entity_extractor import EntityExtractor
 from agent.intelligence.skill_injector import get_skill_context
+from agent.intelligence.action_applier import ActionApplier
+from agent.intelligence.prompt_manager import PromptManager
 from agent.personality.loader import load_personality, Personality
 from agent.schemas import AgentResult, ScoredResult, CriticScore, StepResult, Plan
 
@@ -39,12 +41,18 @@ class Agent:
         router = ModelRouter(self._settings)
 
         self._personality = load_personality()
-        self._triage = Triage(client=self._client, router=router)
-        self._planner = Planner(client=self._client, router=router, personality=self._personality)
-        self._executor = Executor(client=self._client, router=router, settings=self._settings, personality=self._personality)
-        self._critic = Critic(client=self._client, router=router, executor=self._executor)
-        self._state = StateManager(self._settings.recovery.state_file)
         self._memory = MemoryClient()
+
+        # Evolution subsystems
+        self._action_applier = ActionApplier(self._settings, memory=self._memory)
+        self._prompt_manager = PromptManager(memory=self._memory)
+        self._episode_count = 0
+
+        self._triage = Triage(client=self._client, router=router)
+        self._planner = Planner(client=self._client, router=router, personality=self._personality, prompt_manager=self._prompt_manager)
+        self._executor = Executor(client=self._client, router=router, settings=self._settings, personality=self._personality)
+        self._critic = Critic(client=self._client, router=router, executor=self._executor, prompt_manager=self._prompt_manager)
+        self._state = StateManager(self._settings.recovery.state_file)
         self._embedder = Embedder()
         self._entity_extractor = EntityExtractor(client=self._client, router=router)
         self._last_episode_id: str | None = None
@@ -59,6 +67,16 @@ class Agent:
     def memory(self) -> MemoryClient:
         """Expose memory client for feedback and external queries."""
         return self._memory
+
+    @property
+    def action_applier(self) -> ActionApplier:
+        """Expose action applier for reflection integration."""
+        return self._action_applier
+
+    @property
+    def prompt_manager(self) -> PromptManager:
+        """Expose prompt manager for external prompt mutations."""
+        return self._prompt_manager
 
     async def initialize(self) -> None:
         """Connect to optional services (Neo4j). Safe to skip."""
@@ -215,7 +233,35 @@ class Agent:
             await self._persist_memory(user_input, agent_result)
             await self._extract_skills(plan, scored)
 
+        # Phase 5: Evolution — track prompt scores + periodic strategy analysis
+        self._episode_count += 1
+        await self._evolution_cycle(agent_result)
+
         return agent_result
+
+    async def _evolution_cycle(self, result: AgentResult) -> None:
+        """Run evolution tasks: prompt scoring, strategy analysis."""
+        if not self._settings.evolution.enabled:
+            return
+
+        # Record scores for prompt A/B testing
+        avg_score = (
+            sum(r.score.final_score for r in result.results) / len(result.results)
+            if result.results else 0.0
+        )
+        for role in ("planner", "critic"):
+            await self._prompt_manager.record_score(role, avg_score)
+            await self._prompt_manager.evaluate_and_promote(role)
+
+        # Run strategy evolution every 20 episodes
+        if self._episode_count % 20 == 0:
+            try:
+                from agent.intelligence.strategy_evolver import evolve_strategy
+                suggestions = await evolve_strategy(self._settings.logging.trace_file)
+                if suggestions:
+                    await self._action_applier.apply(suggestions)
+            except Exception as exc:
+                logger.warning("Strategy evolution failed: %s", exc)
 
     async def _persist_memory(
         self, user_input: str, result: AgentResult

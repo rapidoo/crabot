@@ -176,6 +176,14 @@ class ReflectionConfig(BaseModel):
     auto_apply: bool = False
 
 
+class EvolutionConfig(BaseModel):
+    enabled: bool = False
+    max_mutations_per_cycle: int = 3
+    overrides_file: str = "./state/overrides.yaml"
+    mutations_log: str = "./state/mutations.jsonl"
+    protected_roles: list[str] = ["critic"]
+
+
 class Settings(BaseModel):
     models: ModelsConfig = ModelsConfig()
     sampling: SamplingConfig = SamplingConfig()
@@ -194,6 +202,7 @@ class Settings(BaseModel):
     feedback: FeedbackConfig = FeedbackConfig()
     adaptive: AdaptiveConfig = AdaptiveConfig()
     reflection: ReflectionConfig = ReflectionConfig()
+    evolution: EvolutionConfig = EvolutionConfig()
 
 
 _DEFAULT_CONFIG_PATH = Path(__file__).parent / "config.yaml"

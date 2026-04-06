@@ -18,6 +18,7 @@ from agent.tools.registry import list_tools_with_descriptions
 
 logger = logging.getLogger(__name__)
 
+# Default template used when no evolved prompt is available
 _PLANNER_SYSTEM_TEMPLATE = """\
 You are a task planner. Given a user request and memory context, produce
 a JSON plan ONLY. No prose. No explanation.
@@ -104,6 +105,7 @@ class Planner:
         client: OllamaClient | None = None,
         router: ModelRouter | None = None,
         personality: Personality | None = None,
+        prompt_manager: object | None = None,
     ):
         settings = get_settings()
         self._client = client or OllamaClient(
@@ -111,6 +113,7 @@ class Planner:
         )
         self._router = router or ModelRouter(settings)
         self._personality = personality
+        self._prompt_manager = prompt_manager
 
     async def plan(self, user_input: str, context: str = "") -> Plan:
         """Generate a plan for the given user input."""
@@ -125,7 +128,22 @@ class Planner:
 
     async def _attempt_plan(self, user_input: str, context: str) -> Plan:
         """Single attempt at generating and parsing a plan."""
-        messages = self._build_messages(user_input, context)
+        # Use evolved prompt if available
+        system_prompt = await self._get_system_prompt()
+        if self._personality and self._personality.agents:
+            system_prompt += f"\n\nOperational rules:\n{self._personality.agents}"
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": system_prompt},
+        ]
+        if context:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"Memory context:\n{context}\n\nUser request:\n{user_input}",
+                }
+            )
+        else:
+            messages.append({"role": "user", "content": user_input})
 
         model = self._router.select("planner")
         sampling = self._router.sampling("planner")
@@ -138,9 +156,24 @@ class Planner:
         logger.debug("Planner raw response: %s", resp.content[:500])
         return _parse_plan(resp.content)
 
+    async def _get_system_prompt(self) -> str:
+        """Get the system prompt, checking PromptManager for an evolved version."""
+        default = _build_system_prompt()
+        if self._prompt_manager and hasattr(self._prompt_manager, "get_prompt"):
+            try:
+                evolved = await self._prompt_manager.get_prompt("planner", default)
+                if evolved != default:
+                    logger.debug("Using evolved planner prompt")
+                return evolved
+            except Exception:
+                pass
+        return default
+
     def _build_messages(
         self, user_input: str, context: str
     ) -> list[dict[str, str]]:
+        # Note: for sync compatibility, use the default prompt here.
+        # The async version is used via _attempt_plan.
         system_prompt = _build_system_prompt()
         # Inject AGENTS.md rules if available
         if self._personality and self._personality.agents:
