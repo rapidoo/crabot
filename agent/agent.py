@@ -21,6 +21,8 @@ from agent.memory.neo4j_client import MemoryClient
 from agent.memory.embedder import Embedder
 from agent.memory.entity_extractor import EntityExtractor
 from agent.intelligence.skill_injector import get_skill_context
+from agent.intelligence.lesson_injector import get_lesson_context
+from agent.memory.lesson_extractor import LessonExtractor
 from agent.intelligence.action_applier import ActionApplier
 from agent.intelligence.prompt_manager import PromptManager
 from agent.core.approval import ApprovalGate
@@ -63,6 +65,7 @@ class Agent:
         self._state = StateManager(self._settings.recovery.state_file)
         self._embedder = Embedder()
         self._entity_extractor = EntityExtractor(client=self._client, router=router)
+        self._lesson_extractor = LessonExtractor(client=self._client, router=router)
         self._last_episode_id: str | None = None
         self._cached_input_entities: list[dict[str, str]] | None = None
 
@@ -168,6 +171,9 @@ class Agent:
             )
             phase_timings["execute"] = time.monotonic() - t0 - phase_timings["triage"]
             self._write_trace(user_input, agent_result, elapsed, simple=True, phase_timings=phase_timings)
+            # Extract lessons even on simple path (corrections are often simple messages)
+            if self._memory.available and self._settings.lessons.enabled:
+                await self._extract_lessons(user_input)
             return agent_result
 
         # Phase 0.5: Memory read + skill injection
@@ -194,6 +200,16 @@ class Agent:
             if skill_ctx:
                 context_parts.append(skill_ctx)
                 logger.info("Memory: injecting %s", skill_ctx.split("\n")[0])
+            # Inject lessons from past corrections
+            if self._settings.lessons.enabled and query_embedding:
+                lesson_ctx = await get_lesson_context(
+                    self._memory,
+                    query_embedding=query_embedding,
+                    limit=self._settings.lessons.max_in_context,
+                )
+                if lesson_ctx:
+                    context_parts.insert(0, lesson_ctx)
+                    logger.info("Memory: injecting lesson context (%d chars)", len(lesson_ctx))
         # Inject conversation history into context
         if self._conversation_history:
             history_lines = ["Recent conversation:"]
@@ -274,10 +290,12 @@ class Agent:
         agent_result = AgentResult(goal=plan.goal, results=scored)
         self._write_trace(user_input, agent_result, elapsed, phase_timings=phase_timings)
 
-        # Phase 4: Memory write — persist episode + extract skills
+        # Phase 4: Memory write — persist episode + extract skills + extract lessons
         if self._memory.available:
             await self._persist_memory(user_input, agent_result)
             await self._extract_skills(plan, scored)
+            if self._settings.lessons.enabled:
+                await self._extract_lessons(user_input)
 
         # Phase 5: Evolution — track prompt scores + periodic strategy analysis
         self._episode_count += 1
@@ -382,6 +400,95 @@ class Agent:
                         skill_name, tool_chain, avg)
         except Exception as exc:
             logger.warning("Skill extraction failed: %s", exc)
+
+    async def _extract_lessons(self, user_input: str) -> None:
+        """Detect and persist lessons from user corrections in conversation."""
+        if not self._conversation_history:
+            return
+
+        # Find the last assistant response before this user message
+        last_assistant = None
+        for msg in reversed(self._conversation_history):
+            if msg["role"] == "assistant":
+                last_assistant = msg["content"]
+                break
+        if not last_assistant:
+            return
+
+        try:
+            lesson = await self._lesson_extractor.detect_and_extract(
+                user_message=user_input,
+                assistant_response=last_assistant,
+            )
+            if lesson is None:
+                return
+
+            # Embed the lesson for semantic search + dedup
+            embed_text = f"{lesson['context']}: {lesson['rule']}"
+            embedding = await self._embedder.embed(embed_text)
+
+            # Dedup: check for similar existing lesson
+            similar = await self._memory.find_similar_lesson(
+                embedding or [],
+                threshold=self._settings.lessons.similarity_threshold,
+            )
+            if similar:
+                await self._memory.reinforce_lesson(similar["id"])
+                logger.info("Lesson reinforced: %s", similar["rule"][:60])
+            else:
+                import uuid
+                lesson_id = str(uuid.uuid4())[:16]
+                await self._memory.persist_lesson(
+                    lesson_id=lesson_id,
+                    rule=lesson["rule"],
+                    context=lesson["context"],
+                    category=lesson["category"],
+                    source_quote=lesson["source_quote"],
+                    embedding=embedding or None,
+                    episode_id=self._last_episode_id,
+                )
+        except Exception as exc:
+            logger.warning("Lesson extraction failed: %s", exc)
+
+    async def learn_from_feedback(self, reason: str) -> str | None:
+        """Extract and persist a lesson from explicit /bad feedback reason."""
+        if not self._memory.available or not self._settings.lessons.enabled:
+            return None
+        # Build episode summary from last episode
+        episode_summary = f"Episode {self._last_episode_id or 'unknown'}"
+        try:
+            lesson = await self._lesson_extractor.extract_from_feedback(
+                reason=reason, episode_summary=episode_summary,
+            )
+            if lesson is None:
+                return None
+
+            embed_text = f"{lesson['context']}: {lesson['rule']}"
+            embedding = await self._embedder.embed(embed_text)
+
+            similar = await self._memory.find_similar_lesson(
+                embedding or [],
+                threshold=self._settings.lessons.similarity_threshold,
+            )
+            if similar:
+                await self._memory.reinforce_lesson(similar["id"])
+                return similar["rule"]
+            else:
+                import uuid
+                lesson_id = str(uuid.uuid4())[:16]
+                await self._memory.persist_lesson(
+                    lesson_id=lesson_id,
+                    rule=lesson["rule"],
+                    context=lesson["context"],
+                    category=lesson["category"],
+                    source_quote=lesson["source_quote"],
+                    embedding=embedding or None,
+                    episode_id=self._last_episode_id,
+                )
+                return lesson["rule"]
+        except Exception as exc:
+            logger.warning("Lesson from feedback failed: %s", exc)
+            return None
 
     def _write_trace(
         self,

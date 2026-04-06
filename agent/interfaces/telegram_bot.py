@@ -323,7 +323,12 @@ class TelegramBot:
             await self._agent.memory.update_episode_score(
                 episode_id, 2.0, reason=reason
             )
-        await update.message.reply_text("Got it. I'll do better next time.")
+        reply = "Got it. I'll do better next time."
+        if reason:
+            lesson_rule = await self._agent.learn_from_feedback(reason)
+            if lesson_rule:
+                reply += f"\nLesson learned: {lesson_rule}"
+        await update.message.reply_text(reply)
         logger.info("Feedback: /bad on episode %s (reason: %s)", episode_id, reason)
 
     async def _handle_stats(

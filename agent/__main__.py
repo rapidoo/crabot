@@ -248,6 +248,10 @@ async def _handle_command(
             print("  No recent result to rate.")
         elif agent._memory.available:
             await agent._memory.update_episode_score(ep, 2.0, reason=args or None)
+            if args:
+                lesson_rule = await agent.learn_from_feedback(args)
+                if lesson_rule:
+                    print(f"  Lesson learned: {lesson_rule}")
             print("  Noted — negative feedback saved.")
         else:
             print("  Neo4j not connected.")

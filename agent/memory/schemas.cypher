@@ -26,3 +26,10 @@ FOR (ep:Episode) ON (ep.timestamp);
 
 CREATE INDEX entity_type IF NOT EXISTS
 FOR (e:Entity) ON (e.type);
+
+// Lessons — user corrections and preferences
+CREATE CONSTRAINT lesson_id IF NOT EXISTS
+FOR (l:Lesson) REQUIRE l.id IS UNIQUE;
+
+CREATE INDEX lesson_category IF NOT EXISTS
+FOR (l:Lesson) ON (l.category);

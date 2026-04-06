@@ -99,6 +99,8 @@ class MemoryClient:
             "CREATE INDEX entity_type IF NOT EXISTS FOR (e:Entity) ON (e.type)",
             "CREATE CONSTRAINT job_id IF NOT EXISTS FOR (j:Job) REQUIRE j.id IS UNIQUE",
             "CREATE INDEX job_status IF NOT EXISTS FOR (j:Job) ON (j.status)",
+            "CREATE CONSTRAINT lesson_id IF NOT EXISTS FOR (l:Lesson) REQUIRE l.id IS UNIQUE",
+            "CREATE INDEX lesson_category IF NOT EXISTS FOR (l:Lesson) ON (l.category)",
         ]
         vector_query = (
             "CREATE VECTOR INDEX episode_embedding IF NOT EXISTS "
@@ -116,6 +118,18 @@ class MemoryClient:
                     await session.run(vector_query)
                 except Exception as vec_exc:
                     logger.warning("Vector index creation failed (Neo4j <5.11?): %s", vec_exc)
+                lesson_vector_query = (
+                    "CREATE VECTOR INDEX lesson_embedding IF NOT EXISTS "
+                    "FOR (l:Lesson) ON (l.embedding) "
+                    "OPTIONS {indexConfig: {"
+                    f"`vector.dimensions`: {dims}, "
+                    "`vector.similarity_function`: 'cosine'"
+                    "}}"
+                )
+                try:
+                    await session.run(lesson_vector_query)
+                except Exception as vec_exc:
+                    logger.warning("Lesson vector index creation failed: %s", vec_exc)
             logger.info("Neo4j schema setup complete")
         except Exception as exc:
             logger.warning("Neo4j schema setup failed: %s", exc)
@@ -396,6 +410,132 @@ class MemoryClient:
             return skills
         except Exception as exc:
             logger.warning("Memory skill read failed: %s", exc)
+            return []
+
+    # ── Lessons (user corrections / preferences) ──────────────────────
+
+    async def persist_lesson(
+        self,
+        lesson_id: str,
+        rule: str,
+        context: str,
+        category: str,
+        source_quote: str,
+        embedding: list[float] | None = None,
+        episode_id: str | None = None,
+    ) -> str | None:
+        """Create a new Lesson node in the graph."""
+        if not self._available:
+            return None
+        try:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    CREATE (l:Lesson {
+                        id: $id, rule: $rule, context: $context,
+                        category: $category, source_quote: $source_quote,
+                        confidence: 1.0, times_reinforced: 0,
+                        created_at: datetime(), last_used: datetime(),
+                        embedding: $embedding
+                    })
+                    """,
+                    id=lesson_id, rule=rule, context=context,
+                    category=category, source_quote=source_quote,
+                    embedding=embedding or [],
+                )
+                if episode_id:
+                    await session.run(
+                        """
+                        MATCH (l:Lesson {id: $lid}), (ep:Episode {id: $eid})
+                        MERGE (l)-[:LEARNED_FROM]->(ep)
+                        """,
+                        lid=lesson_id, eid=episode_id,
+                    )
+            logger.info("Memory: persisted lesson %s — %s", lesson_id, rule[:60])
+            return lesson_id
+        except Exception as exc:
+            logger.warning("Lesson persist failed: %s", exc)
+            return None
+
+    async def find_similar_lesson(
+        self,
+        embedding: list[float],
+        threshold: float = 0.85,
+    ) -> dict | None:
+        """Find the most similar existing lesson by vector search.
+
+        Returns {"id", "rule", "similarity"} if above threshold, else None.
+        """
+        if not self._available or not embedding:
+            return None
+        try:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    """
+                    CALL db.index.vector.queryNodes(
+                        'lesson_embedding', 1, $embedding
+                    ) YIELD node, score
+                    WHERE score > $threshold
+                    RETURN node.id AS id, node.rule AS rule, score AS similarity
+                    LIMIT 1
+                    """,
+                    embedding=embedding, threshold=threshold,
+                )
+                record = await result.single()
+                if record:
+                    return dict(record)
+            return None
+        except Exception as exc:
+            logger.debug("Lesson similarity search failed: %s", exc)
+            return None
+
+    async def reinforce_lesson(self, lesson_id: str) -> None:
+        """Reinforce an existing lesson — bump confidence and usage count."""
+        if not self._available:
+            return
+        try:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MATCH (l:Lesson {id: $id})
+                    SET l.times_reinforced = l.times_reinforced + 1,
+                        l.confidence = l.confidence + 0.1,
+                        l.last_used = datetime()
+                    """,
+                    id=lesson_id,
+                )
+            logger.info("Memory: reinforced lesson %s", lesson_id)
+        except Exception as exc:
+            logger.warning("Lesson reinforce failed: %s", exc)
+
+    async def get_relevant_lessons(
+        self,
+        query_embedding: list[float],
+        limit: int = 5,
+    ) -> list[dict]:
+        """Retrieve semantically relevant lessons via vector search."""
+        if not self._available or not query_embedding:
+            return []
+        try:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    """
+                    CALL db.index.vector.queryNodes(
+                        'lesson_embedding', $limit, $embedding
+                    ) YIELD node, score
+                    RETURN node.id AS id, node.rule AS rule,
+                           node.context AS context, node.category AS category,
+                           node.confidence AS confidence,
+                           node.times_reinforced AS times_reinforced,
+                           score AS similarity
+                    ORDER BY score * node.confidence DESC
+                    LIMIT $limit
+                    """,
+                    embedding=query_embedding, limit=limit,
+                )
+                return [dict(r) async for r in result]
+        except Exception as exc:
+            logger.warning("Lesson retrieval failed: %s", exc)
             return []
 
     async def persist_goal(

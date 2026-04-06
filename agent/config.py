@@ -30,7 +30,7 @@ MODEL_PRESETS: dict[str, dict[str, str]] = {
         "planner": "mistral-small3.2",
         "executor": "mistral-small3.2",
         "executor_draft": "ministral-3:3b",
-        "critic": "mistral-small4",
+        "critic": "mistral-small3.2",
         "critic_light": "mistral-small3.2",
     },
 }
@@ -189,6 +189,13 @@ class ReflectionConfig(BaseModel):
     auto_apply: bool = False
 
 
+class LessonConfig(BaseModel):
+    enabled: bool = True
+    similarity_threshold: float = 0.85
+    max_in_context: int = 5
+    decay_days: int = 90
+
+
 class EvolutionConfig(BaseModel):
     enabled: bool = False
     max_mutations_per_cycle: int = 3
@@ -222,6 +229,7 @@ class Settings(BaseModel):
     adaptive: AdaptiveConfig = AdaptiveConfig()
     reflection: ReflectionConfig = ReflectionConfig()
     evolution: EvolutionConfig = EvolutionConfig()
+    lessons: LessonConfig = LessonConfig()
     approval: ApprovalConfig = ApprovalConfig()
     truncation: TruncationConfig = TruncationConfig()
 
