@@ -7,7 +7,7 @@
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![Ollama](https://img.shields.io/badge/Ollama-Gemma_4-000000?logo=ollama&logoColor=white)](https://ollama.com)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Tests: 206+](https://img.shields.io/badge/Tests-206+-green.svg)]()
+[![Tests: 291+](https://img.shields.io/badge/Tests-291+-green.svg)]()
 
 **Zéro cloud. Zéro API payante. Zéro tracking.**<br>
 Juste un LLM local, un crabe têtu, et ton terminal.
@@ -102,6 +102,8 @@ models:
 - **Open weights** : pas de licence restrictive, pas de call home
 
 > 🧪 **Testé sur MacBook Pro M4 Pro, 48 Go RAM** — les 3 modèles Gemma 4 tournent simultanément sans broncher.
+
+> ⚠️ **Bug connu : Gemma 4 et le français** — Le tokenizer de Gemma 4 tronque les caractères accentués français (é, è, ê, ç...), produisant des mots incomplets ("compétences" → "comp"). Ce bug est au niveau du modèle, pas du code. **Workaround : utiliser Mistral** avec `make chat MODEL=MISTRAL` ou `MODEL_NAME=MISTRAL` dans `.env`.
 
 > Fonctionne aussi avec n'importe quel modèle Ollama — Llama 3, Mistral, Qwen... Change 4 lignes dans `config.yaml`.
 
@@ -276,7 +278,7 @@ BRAVE_API_KEY=ta_cle_brave_search          # optionnel — pour la recherche web
 
 ## 🧪 Tests
 
-206+ tests. On ne rigole pas avec la qualité.
+291+ tests. On ne rigole pas avec la qualité.
 
 ```bash
 make test                 # Unit + intégration (sans Neo4j)
@@ -362,7 +364,7 @@ crabot/
 │       ├── state.py           Crash recovery
 │       ├── retry.py           Backoff exponentiel
 │       └── metrics.py         Métriques JSONL
-├── tests/                     206+ tests
+├── tests/                     291+ tests
 └── benchmarks/                Suite benchmark (20 prompts)
 ```
 
@@ -387,7 +389,7 @@ crabot/
 - [x] **Recherche hybride par embeddings** — vector similarity (70%) + lexical (30%) via `nomic-embed-text` + Neo4j vector index
 - [x] **Compression mémorielle** — purge automatique des vieux épisodes bas-score
 - [ ] **RAG sur documents locaux** — ingestion PDF, Markdown, code source avec chunking
-- [ ] **Conversation multi-tours** — contexte glissant sur les N derniers échanges
+- [x] **Conversation multi-tours** — contexte glissant sur les 20 derniers échanges + `/clean`
 - [ ] **Planning long terme** — décomposition de projets en sous-goals avec suivi automatique
 - [ ] **Self-evaluation benchmarks** — l'agent s'auto-évalue sur une suite de tests et ajuste ses prompts
 - [ ] **Fine-tuning local** — adaptation du modèle sur les épisodes à score élevé (LoRA)
