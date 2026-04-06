@@ -141,6 +141,8 @@ Memory Write (Neo4j) ── épisode + embedding + entités + skills extraites
 
 Le pattern **Plan → Execute → Critique** garantit que chaque réponse complexe est vérifiée avant d'être envoyée. Si le Critic n'est pas satisfait, l'Executor recommence — automatiquement.
 
+> Pour une documentation architecture détaillée (diagrammes, modules, features, patterns), voir [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
 ---
 
 ## 🚀 Quickstart
