@@ -37,6 +37,7 @@ class JobManager:
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._jobs: OrderedDict[str, Job] = OrderedDict()
         self._tasks: dict[str, asyncio.Task] = {}
+        self._conversation_histories: dict[str, list[dict[str, str]]] = {}
 
         # Callbacks set by the interface (Telegram bot)
         self._on_progress: Callable[[Job], Awaitable[None]] | None = None
@@ -53,6 +54,7 @@ class JobManager:
         user_input: str,
         chat_id: int = 0,
         message_id: int | None = None,
+        conversation_history: list[dict[str, str]] | None = None,
     ) -> Job:
         """Submit a new background job. Returns immediately."""
         job = Job(
@@ -64,6 +66,7 @@ class JobManager:
             created_at=datetime.now(timezone.utc).isoformat(),
         )
         self._jobs[job.id] = job
+        self._conversation_histories[job.id] = conversation_history or []
         self._evict_old()
 
         # Persist to Neo4j (fire-and-forget)
@@ -97,7 +100,12 @@ class JobManager:
                         pass
 
             try:
-                result = await self._agent.run(job.user_input, on_progress=_progress)
+                history = self._conversation_histories.pop(job.id, [])
+                result = await self._agent.run(
+                    job.user_input,
+                    on_progress=_progress,
+                    conversation_history=history,
+                )
 
                 # Success
                 job.status = JobStatus.done

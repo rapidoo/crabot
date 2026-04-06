@@ -101,8 +101,15 @@ class Agent:
         self,
         user_input: str,
         on_progress: ProgressCallback = None,
+        conversation_history: list[dict[str, str]] | None = None,
     ) -> AgentResult:
-        """Execute the full agent pipeline on user input."""
+        """Execute the full agent pipeline on user input.
+
+        Args:
+            conversation_history: list of {"role": "user"|"assistant", "content": "..."}
+                from previous turns in this conversation session.
+        """
+        self._conversation_history = conversation_history or []
         start = time.monotonic()
         logger.info("=== Agent started: %s", user_input[:100])
 
@@ -128,7 +135,9 @@ class Agent:
 
         if complexity == "simple":
             await self._notify(on_progress, "executing", "Direct answer...")
-            result = await self._executor.execute_direct(user_input)
+            result = await self._executor.execute_direct(
+                user_input, conversation_history=self._conversation_history
+            )
             elapsed = time.monotonic() - start
             logger.info("=== Simple path done in %.1fs", elapsed)
             score = CriticScore(
@@ -170,6 +179,15 @@ class Agent:
             if skill_ctx:
                 context_parts.append(skill_ctx)
                 logger.info("Memory: injecting %s", skill_ctx.split("\n")[0])
+        # Inject conversation history into context
+        if self._conversation_history:
+            history_lines = ["Recent conversation:"]
+            for msg in self._conversation_history[-10:]:  # Last 10 turns max
+                role = "User" if msg["role"] == "user" else "Assistant"
+                content = msg["content"][:300]
+                history_lines.append(f"  {role}: {content}")
+            context_parts.insert(0, "\n".join(history_lines))
+
         context = "\n\n".join(context_parts)
 
         # Phase 1: Plan

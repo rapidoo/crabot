@@ -152,7 +152,11 @@ class Executor:
 
         return StepResult(step_id=step.id, output=output)
 
-    async def execute_direct(self, user_input: str) -> StepResult:
+    async def execute_direct(
+        self,
+        user_input: str,
+        conversation_history: list[dict[str, str]] | None = None,
+    ) -> StepResult:
         """Direct LLM call without a plan (for simple triage bypass)."""
         model = self._router.select("executor")
         sampling = self._router.sampling("executor")
@@ -167,13 +171,17 @@ class Executor:
         if self._personality and self._personality.user:
             system_parts.append(f"\nUser profile:\n{self._personality.user}")
 
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": "\n".join(system_parts)},
+        ]
+        # Inject conversation history for multi-turn context
+        if conversation_history:
+            for msg in conversation_history[-10:]:
+                messages.append({"role": msg["role"], "content": msg["content"][:500]})
+        messages.append({"role": "user", "content": user_input})
+
         resp: ChatResponse = await self._client.chat(
-            model,
-            [
-                {"role": "system", "content": "\n".join(system_parts)},
-                {"role": "user", "content": user_input},
-            ],
-            sampling=sampling,
+            model, messages, sampling=sampling,
         )
         return StepResult(step_id=0, output=resp.content, tokens_used=resp.eval_count)
 
