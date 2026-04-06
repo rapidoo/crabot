@@ -18,9 +18,13 @@ logger = logging.getLogger(__name__)
 
 REFLECTION_PROMPT = """\
 You are performing a self-reflection on your recent performance as an AI agent.
-Analyze these metrics and suggest concrete improvements.
+Analyze these metrics, errors, and step details to diagnose problems and suggest fixes.
 
 {metrics_block}
+
+{error_block}
+
+{timing_block}
 
 Based on this data, respond with JSON ONLY:
 {{
@@ -29,13 +33,65 @@ Based on this data, respond with JSON ONLY:
     {{"type": "adjust_threshold", "task_type": "...", "new_value": 6.0}},
     {{"type": "escalate_model", "task_type": "...", "from": "e4b", "to": "26b"}},
     {{"type": "create_skill", "name": "...", "tool_chain": ["search", "code"]}},
-    {{"type": "disable_tool", "tool": "...", "reason": "..."}}
+    {{"type": "disable_tool", "tool": "...", "reason": "..."}},
+    {{"type": "modify_source", "target": "agent/prompts/critic.md", "new_value": "...", "reason": "..."}}
   ]
 }}
 
+Focus on diagnosing WHY errors happen and HOW to prevent them.
 Only suggest actions backed by data. Be specific."""
 
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def _build_error_block(metrics: MetricsCollector, last_n: int) -> str:
+    """Extract recent errors and low-score details from traces."""
+    traces = metrics.load_last(last_n)
+    error_entries = [t for t in traces if t.get("has_errors")]
+    low_entries = [t for t in traces if t.get("has_low_scores")]
+
+    if not error_entries and not low_entries:
+        return "No errors or low scores in recent episodes."
+
+    lines = ["Recent problems:"]
+    for t in error_entries[-5:]:
+        for step in t.get("step_details", []):
+            if "error" in step:
+                lines.append(
+                    f"  ERROR [{step.get('tool', '?')}]: {step['error'][:200]}"
+                )
+                lines.append(f"    Input: {step.get('input', '?')[:150]}")
+    for t in low_entries[-5:]:
+        for step in t.get("step_details", []):
+            if step.get("score", 10) < 6.5:
+                breakdown = step.get("scores_breakdown", {})
+                weak = [f"{k}={v}" for k, v in breakdown.items() if v < 6]
+                lines.append(
+                    f"  LOW [{step.get('tool', '?')}] score={step['score']:.0f} "
+                    f"weak: {', '.join(weak) or 'none'}"
+                )
+                if step.get("reason"):
+                    lines.append(f"    Reason: {step['reason'][:150]}")
+    return "\n".join(lines)
+
+
+def _build_timing_block(metrics: MetricsCollector, last_n: int) -> str:
+    """Aggregate phase timing stats from traces."""
+    traces = metrics.load_last(last_n)
+    timings: dict[str, list[float]] = {}
+    for t in traces:
+        for phase, dur in t.get("timings", {}).items():
+            timings.setdefault(phase, []).append(dur)
+
+    if not timings:
+        return "No timing data available."
+
+    lines = ["Phase timing averages:"]
+    for phase, durs in sorted(timings.items()):
+        avg = sum(durs) / len(durs)
+        mx = max(durs)
+        lines.append(f"  {phase}: avg {avg:.1f}s, max {mx:.1f}s ({len(durs)} samples)")
+    return "\n".join(lines)
 
 
 async def reflect(
@@ -59,7 +115,16 @@ async def reflect(
         return {"insights": ["Not enough data yet"], "actions": []}
 
     metrics_block = "\n".join(f"- {k}: {v}" for k, v in summary.items())
-    prompt = REFLECTION_PROMPT.format(metrics_block=metrics_block)
+
+    # Load detailed error info from recent traces
+    error_block = _build_error_block(metrics, last_n)
+    timing_block = _build_timing_block(metrics, last_n)
+
+    prompt = REFLECTION_PROMPT.format(
+        metrics_block=metrics_block,
+        error_block=error_block,
+        timing_block=timing_block,
+    )
 
     try:
         result = await agent.run(prompt)
