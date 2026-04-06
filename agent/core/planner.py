@@ -12,12 +12,14 @@ from agent.config import get_settings
 from agent.models.ollama_client import OllamaClient, ChatResponse
 from agent.models.router import ModelRouter
 from agent.infra.retry import with_retry, MaxRetriesExceeded
+from agent.intelligence.prompt_manager import PromptManager
 from agent.personality.loader import Personality
 from agent.schemas import Plan
 from agent.tools.registry import list_tools_with_descriptions
 
 logger = logging.getLogger(__name__)
 
+# Default template used when no evolved prompt is available
 _PLANNER_SYSTEM_TEMPLATE = """\
 You are a task planner. Given a user request and memory context, produce
 a JSON plan ONLY. No prose. No explanation.
@@ -104,6 +106,7 @@ class Planner:
         client: OllamaClient | None = None,
         router: ModelRouter | None = None,
         personality: Personality | None = None,
+        prompt_manager: PromptManager | None = None,
     ):
         settings = get_settings()
         self._client = client or OllamaClient(
@@ -111,6 +114,7 @@ class Planner:
         )
         self._router = router or ModelRouter(settings)
         self._personality = personality
+        self._prompt_manager = prompt_manager
 
     async def plan(self, user_input: str, context: str = "") -> Plan:
         """Generate a plan for the given user input."""
@@ -125,24 +129,8 @@ class Planner:
 
     async def _attempt_plan(self, user_input: str, context: str) -> Plan:
         """Single attempt at generating and parsing a plan."""
-        messages = self._build_messages(user_input, context)
-
-        model = self._router.select("planner")
-        sampling = self._router.sampling("planner")
-        thinking = self._router.thinking_enabled("planner")
-
-        resp: ChatResponse = await self._client.chat(
-            model, messages, sampling=sampling, thinking=thinking
-        )
-
-        logger.debug("Planner raw response: %s", resp.content[:500])
-        return _parse_plan(resp.content)
-
-    def _build_messages(
-        self, user_input: str, context: str
-    ) -> list[dict[str, str]]:
-        system_prompt = _build_system_prompt()
-        # Inject AGENTS.md rules if available
+        # Use evolved prompt if available
+        system_prompt = await self._get_system_prompt()
         if self._personality and self._personality.agents:
             system_prompt += f"\n\nOperational rules:\n{self._personality.agents}"
         messages: list[dict[str, str]] = [
@@ -157,4 +145,28 @@ class Planner:
             )
         else:
             messages.append({"role": "user", "content": user_input})
-        return messages
+
+        model = self._router.select("planner")
+        sampling = self._router.sampling("planner")
+        thinking = self._router.thinking_enabled("planner")
+
+        resp: ChatResponse = await self._client.chat(
+            model, messages, sampling=sampling, thinking=thinking
+        )
+
+        logger.debug("Planner raw response: %s", resp.content[:500])
+        return _parse_plan(resp.content)
+
+    async def _get_system_prompt(self) -> str:
+        """Get the system prompt, checking PromptManager for an evolved version."""
+        default = _build_system_prompt()
+        if self._prompt_manager and hasattr(self._prompt_manager, "get_prompt"):
+            try:
+                evolved = await self._prompt_manager.get_prompt("planner", default)
+                if evolved != default:
+                    logger.debug("Using evolved planner prompt")
+                return evolved
+            except Exception as exc:
+                logger.warning("Failed to get evolved planner prompt: %s", exc)
+        return default
+

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -93,3 +93,20 @@ class Job(BaseModel):
     result: AgentResult | None = None
     error: str | None = None
     episode_id: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Mutations (self-modification tracking)
+# ---------------------------------------------------------------------------
+
+
+class Mutation(BaseModel):
+    id: str
+    timestamp: str
+    action_type: str  # adjust_threshold | escalate_model | disable_tool | create_skill | mutate_prompt
+    target: str
+    previous_value: Any = None
+    new_value: Any = None
+    reason: str = ""
+    reflection_id: str | None = None
+    rolled_back: bool = False

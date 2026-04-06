@@ -644,3 +644,220 @@ class MemoryClient:
                 )
         except Exception as exc:
             logger.warning("Link job-episode failed: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Generated Tools (evolution)
+    # ------------------------------------------------------------------
+
+    async def persist_generated_tool(
+        self,
+        name: str,
+        version: int,
+        source_hash: str,
+    ) -> None:
+        """Create or update a GeneratedTool node."""
+        if not self._available:
+            return
+        try:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MERGE (t:GeneratedTool {name: $name})
+                    SET t.version = $version,
+                        t.source_hash = $source_hash,
+                        t.updated_at = datetime(),
+                        t.usage_count = COALESCE(t.usage_count, 0),
+                        t.error_count = COALESCE(t.error_count, 0),
+                        t.avg_score = COALESCE(t.avg_score, 0.0)
+                    ON CREATE SET t.created_at = datetime()
+                    """,
+                    name=name,
+                    version=version,
+                    source_hash=source_hash,
+                )
+        except Exception as exc:
+            logger.warning("Persist generated tool failed: %s", exc)
+
+    async def update_tool_stats(
+        self,
+        name: str,
+        success: bool = True,
+        score: float = 0.0,
+    ) -> None:
+        """Increment usage/error counts and update rolling avg score."""
+        if not self._available:
+            return
+        try:
+            async with self._driver.session() as session:
+                error_inc = 0 if success else 1
+                await session.run(
+                    """
+                    MATCH (t:GeneratedTool {name: $name})
+                    SET t.usage_count = t.usage_count + 1,
+                        t.error_count = t.error_count + $error_inc,
+                        t.avg_score = CASE
+                            WHEN t.usage_count = 0 THEN $score
+                            ELSE (t.avg_score * t.usage_count + $score) / (t.usage_count + 1)
+                        END,
+                        t.last_used = datetime()
+                    """,
+                    name=name,
+                    error_inc=error_inc,
+                    score=score,
+                )
+        except Exception as exc:
+            logger.warning("Update tool stats failed: %s", exc)
+
+    async def get_tool_stats(self, name: str) -> dict | None:
+        """Get stats for a single generated tool."""
+        if not self._available:
+            return None
+        try:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    "MATCH (t:GeneratedTool {name: $name}) RETURN t",
+                    name=name,
+                )
+                records = await result.data()
+                return dict(records[0]["t"]) if records else None
+        except Exception as exc:
+            logger.warning("Get tool stats failed: %s", exc)
+            return None
+
+    async def get_generated_tools(self) -> list[dict]:
+        """Get all generated tool stats."""
+        if not self._available:
+            return []
+        try:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    "MATCH (t:GeneratedTool) RETURN t ORDER BY t.usage_count DESC"
+                )
+                records = await result.data()
+                return [dict(r["t"]) for r in records]
+        except Exception as exc:
+            logger.warning("Get generated tools failed: %s", exc)
+            return []
+
+    # ------------------------------------------------------------------
+    # Prompt Versions (evolution)
+    # ------------------------------------------------------------------
+
+    async def persist_prompt_version(
+        self,
+        prompt_id: str,
+        role: str,
+        version: int,
+        content: str,
+        is_active: bool = False,
+    ) -> None:
+        """Create a PromptVersion node."""
+        if not self._available:
+            return
+        try:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MERGE (p:PromptVersion {id: $id})
+                    SET p.role = $role,
+                        p.version = $version,
+                        p.content = $content,
+                        p.is_active = $is_active,
+                        p.score_avg = 0.0,
+                        p.usage_count = 0,
+                        p.created_at = datetime()
+                    """,
+                    id=prompt_id,
+                    role=role,
+                    version=version,
+                    content=content,
+                    is_active=is_active,
+                )
+        except Exception as exc:
+            logger.warning("Persist prompt version failed: %s", exc)
+
+    async def get_active_prompt(self, role: str) -> dict | None:
+        """Get the currently active prompt for a role."""
+        if not self._available:
+            return None
+        try:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (p:PromptVersion {role: $role, is_active: true})
+                    RETURN p ORDER BY p.version DESC LIMIT 1
+                    """,
+                    role=role,
+                )
+                records = await result.data()
+                return dict(records[0]["p"]) if records else None
+        except Exception as exc:
+            logger.warning("Get active prompt failed: %s", exc)
+            return None
+
+    async def get_candidate_prompt(self, role: str) -> dict | None:
+        """Get the candidate (non-active, latest) prompt for A/B testing."""
+        if not self._available:
+            return None
+        try:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (p:PromptVersion {role: $role, is_active: false})
+                    RETURN p ORDER BY p.version DESC LIMIT 1
+                    """,
+                    role=role,
+                )
+                records = await result.data()
+                return dict(records[0]["p"]) if records else None
+        except Exception as exc:
+            logger.warning("Get candidate prompt failed: %s", exc)
+            return None
+
+    async def promote_prompt(self, role: str, prompt_id: str) -> None:
+        """Promote a candidate prompt to active, deactivating the current one."""
+        if not self._available:
+            return
+        try:
+            async with self._driver.session() as session:
+                # Deactivate all for this role
+                await session.run(
+                    """
+                    MATCH (p:PromptVersion {role: $role})
+                    SET p.is_active = false
+                    """,
+                    role=role,
+                )
+                # Activate the new one
+                await session.run(
+                    """
+                    MATCH (p:PromptVersion {id: $id})
+                    SET p.is_active = true
+                    """,
+                    id=prompt_id,
+                )
+        except Exception as exc:
+            logger.warning("Promote prompt failed: %s", exc)
+
+    async def update_prompt_stats(
+        self, prompt_id: str, score: float
+    ) -> None:
+        """Update usage count and rolling average score for a prompt."""
+        if not self._available:
+            return
+        try:
+            async with self._driver.session() as session:
+                await session.run(
+                    """
+                    MATCH (p:PromptVersion {id: $id})
+                    SET p.score_avg = CASE
+                            WHEN p.usage_count = 0 THEN $score
+                            ELSE (p.score_avg * p.usage_count + $score) / (p.usage_count + 1)
+                        END,
+                        p.usage_count = p.usage_count + 1
+                    """,
+                    id=prompt_id,
+                    score=score,
+                )
+        except Exception as exc:
+            logger.warning("Update prompt stats failed: %s", exc)

@@ -12,6 +12,7 @@ from agent.tools.base import Tool
 logger = logging.getLogger(__name__)
 
 _registry: dict[str, Callable[[], Tool | None]] = {}
+_disabled_tools: set[str] = set()
 
 
 def register_tool(name: str, factory: Callable[[], Tool | None]) -> None:
@@ -19,8 +20,21 @@ def register_tool(name: str, factory: Callable[[], Tool | None]) -> None:
     _registry[name] = factory
 
 
+def disable_tool(name: str) -> None:
+    """Add a tool to the blocklist (used by evolution/action_applier)."""
+    _disabled_tools.add(name)
+
+
+def enable_tool(name: str) -> None:
+    """Remove a tool from the blocklist."""
+    _disabled_tools.discard(name)
+
+
 def get_tool(name: str) -> Tool | None:
-    """Retrieve a tool by name. Returns None if not registered or unavailable."""
+    """Retrieve a tool by name. Returns None if not registered, unavailable, or disabled."""
+    if name in _disabled_tools:
+        logger.info("Tool '%s' is disabled by evolution", name)
+        return None
     factory = _registry.get(name)
     if factory is None:
         return None

@@ -92,4 +92,11 @@ adaptive:
 reflection:
   enabled: false
   last_n_episodes: 50
-  auto_apply: false
+  auto_apply: true
+
+evolution:
+  enabled: false
+  max_mutations_per_cycle: 3
+  overrides_file: ./state/overrides.yaml
+  mutations_log: ./state/mutations.jsonl
+  protected_roles: ["critic"]
