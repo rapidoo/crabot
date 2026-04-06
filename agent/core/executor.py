@@ -13,6 +13,8 @@ from agent.config import get_settings, Settings
 from agent.models.ollama_client import OllamaClient, ChatResponse
 from agent.models.router import ModelRouter
 from agent.intelligence.loop_detection import LoopDetector
+from agent.core.approval import ApprovalGate
+from agent.core.output_truncation import truncate_output
 from agent.personality.loader import Personality
 from agent.schemas import Plan, Step, StepResult
 
@@ -37,6 +39,7 @@ class Executor:
         router: ModelRouter | None = None,
         settings: Settings | None = None,
         personality: Personality | None = None,
+        approval_gate: ApprovalGate | None = None,
     ):
         global _tools_discovered
         if not _tools_discovered:
@@ -50,6 +53,10 @@ class Executor:
         self._router = router or ModelRouter(self._settings)
         self._personality = personality
         self._loop_detector = LoopDetector()
+        self._approval_gate = approval_gate or ApprovalGate(
+            interactive=False,
+            enabled=self._settings.approval.enabled,
+        )
 
     async def execute(
         self,
@@ -144,11 +151,26 @@ class Executor:
             logger.warning("Tool '%s' not available, falling back to LLM", step.tool)
             return await self._execute_llm(step, context_trace)
 
+        # Approval gate for dangerous actions
+        if self._approval_gate.needs_approval(step.tool, step.input):
+            if not self._approval_gate.request_approval(step.tool, step.input):
+                return StepResult(
+                    step_id=step.id, output="ACTION DENIED: User rejected this action."
+                )
+
         try:
             output = await tool.run(step.input)
         except Exception as exc:
             logger.error("Tool '%s' failed: %s", step.tool, exc)
             output = f"ERROR: {exc}"
+
+        # Truncate oversized outputs
+        if self._settings.truncation.enabled:
+            output = truncate_output(
+                output,
+                max_chars=self._settings.truncation.max_chars,
+                tail_chars=self._settings.truncation.tail_chars,
+            )
 
         return StepResult(step_id=step.id, output=output)
 

@@ -55,6 +55,8 @@ context:
   max_tokens_per_call: 32768
   skeleton_threshold:  500
   trace_in_context:    true
+  compression_threshold: 0.50      # Compress when history exceeds 50% of budget
+  compression_protect_last_n: 4    # Always keep last 4 exchanges in full
 
 telegram:
   bot_token: ""                # Loaded from .env TELEGRAM_BOT_TOKEN
@@ -100,3 +102,11 @@ evolution:
   overrides_file: ./state/overrides.yaml
   mutations_log: ./state/mutations.jsonl
   protected_roles: ["critic"]
+
+approval:
+  enabled: true                    # Confirm dangerous tool actions (interactive mode)
+
+truncation:
+  enabled: true                    # Truncate oversized tool outputs
+  max_chars: 50000                 # Max characters per tool output
+  tail_chars: 2000                 # Preserve last N chars when truncating

@@ -23,6 +23,8 @@ from agent.memory.entity_extractor import EntityExtractor
 from agent.intelligence.skill_injector import get_skill_context
 from agent.intelligence.action_applier import ActionApplier
 from agent.intelligence.prompt_manager import PromptManager
+from agent.core.context_manager import ContextManager
+from agent.core.approval import ApprovalGate
 from agent.personality.loader import load_personality, Personality
 from agent.schemas import AgentResult, ScoredResult, CriticScore, StepResult, Plan
 
@@ -35,13 +37,18 @@ logger = logging.getLogger(__name__)
 class Agent:
     """Triage → Memory Read → Plan → Execute → Critique → Memory Write."""
 
-    def __init__(self, settings: Settings | None = None):
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        approval_gate: ApprovalGate | None = None,
+    ):
         self._settings = settings or get_settings()
         self._client = OllamaClient(base_url=self._settings.models.ollama_base_url)
         router = ModelRouter(self._settings)
 
         self._personality = load_personality()
         self._memory = MemoryClient()
+        self._context_manager = ContextManager.from_settings(self._settings)
 
         # Evolution subsystems
         self._action_applier = ActionApplier(self._settings, memory=self._memory)
@@ -50,7 +57,10 @@ class Agent:
 
         self._triage = Triage(client=self._client, router=router)
         self._planner = Planner(client=self._client, router=router, personality=self._personality, prompt_manager=self._prompt_manager)
-        self._executor = Executor(client=self._client, router=router, settings=self._settings, personality=self._personality)
+        self._executor = Executor(
+            client=self._client, router=router, settings=self._settings,
+            personality=self._personality, approval_gate=approval_gate,
+        )
         self._critic = Critic(client=self._client, router=router, executor=self._executor, prompt_manager=self._prompt_manager)
         self._state = StateManager(self._settings.recovery.state_file)
         self._embedder = Embedder()
@@ -62,6 +72,11 @@ class Agent:
     def last_episode_id(self) -> str | None:
         """Last persisted episode ID (for feedback /good /bad)."""
         return self._last_episode_id
+
+    @property
+    def context_manager(self) -> ContextManager:
+        """Expose context manager for REPL integration."""
+        return self._context_manager
 
     @property
     def memory(self) -> MemoryClient:
@@ -145,11 +160,23 @@ class Agent:
                 results=[ScoredResult(step=dummy_step, result=result, score=score)],
             )
             self._write_trace(user_input, agent_result, elapsed, simple=True)
+            self._context_manager.add_turn(user_input, result.output)
             return agent_result
+
+        # Inject conversation history into context
+        history_msgs = self._context_manager.get_history_messages()
+        conv_context = ""
+        if history_msgs:
+            parts = []
+            for msg in history_msgs:
+                parts.append(f"[{msg['role']}]: {msg['content'][:300]}")
+            conv_context = "Conversation history:\n" + "\n".join(parts)
 
         # Phase 0.5: Memory read + skill injection
         self._cached_input_entities = None
         context_parts: list[str] = []
+        if conv_context:
+            context_parts.append(conv_context)
         if self._memory.available:
             logger.info("Phase 0.5: Memory read...")
             await self._notify(on_progress, "memory", "Loading context...")
@@ -227,6 +254,10 @@ class Agent:
 
         agent_result = AgentResult(goal=plan.goal, results=scored)
         self._write_trace(user_input, agent_result, elapsed)
+
+        # Record turn in conversation history
+        output_summary = " | ".join(r.result.output[:200] for r in scored)
+        self._context_manager.add_turn(user_input, output_summary)
 
         # Phase 4: Memory write — persist episode + extract skills
         if self._memory.available:
