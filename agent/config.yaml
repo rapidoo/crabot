@@ -100,3 +100,20 @@ evolution:
   overrides_file: ./state/overrides.yaml
   mutations_log: ./state/mutations.jsonl
   protected_roles: ["critic"]
+
+skills:
+  enabled: true
+  library_dir: ./agent/skills/library
+  auto_discover: true
+  discovery_sources:
+    - https://github.com/anthropics/skills
+  security:
+    min_score: 7.0              # Minimum security score to approve a skill
+    require_llm_review: true    # Use LLM for deeper semantic analysis
+    auto_reject_on_fail: true   # Auto-reject skills that fail security review
+  evolution:
+    enabled: true
+    min_uses_before_evolve: 5   # Minimum uses before evolution is considered
+    feedback_threshold: 6.0     # Evolve if avg score below this
+  max_active_skills: 20
+  trigger_match_threshold: 0.6

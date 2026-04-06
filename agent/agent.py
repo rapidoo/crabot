@@ -23,6 +23,9 @@ from agent.memory.entity_extractor import EntityExtractor
 from agent.intelligence.skill_injector import get_skill_context
 from agent.intelligence.action_applier import ActionApplier
 from agent.intelligence.prompt_manager import PromptManager
+from agent.skills.manager import SkillManager
+from agent.skills.store import SkillStore
+from agent.tools.security_review import SecurityReviewTool
 from agent.personality.loader import load_personality, Personality
 from agent.schemas import AgentResult, ScoredResult, CriticScore, StepResult, Plan
 
@@ -47,6 +50,33 @@ class Agent:
         self._action_applier = ActionApplier(self._settings, memory=self._memory)
         self._prompt_manager = PromptManager(memory=self._memory)
         self._episode_count = 0
+
+        # Skills subsystem
+        self._skill_manager: SkillManager | None = None
+        if self._settings.skills.enabled:
+            skill_store = SkillStore(self._settings.skills.library_dir)
+            security_tool = SecurityReviewTool(
+                client=self._client,
+                router=router,
+                use_llm=self._settings.skills.security.require_llm_review,
+            )
+            spider_tool = None
+            try:
+                from agent.tools.spider_search import SpiderSearchTool
+                import os
+                api_key = os.environ.get("SPIDER_API_KEY", "")
+                if api_key:
+                    spider_tool = SpiderSearchTool(api_key=api_key)
+            except Exception:
+                pass
+            self._skill_manager = SkillManager(
+                store=skill_store,
+                security_tool=security_tool,
+                spider_tool=spider_tool,
+                client=self._client,
+                router=router,
+                min_security_score=self._settings.skills.security.min_score,
+            )
 
         self._triage = Triage(client=self._client, router=router)
         self._planner = Planner(client=self._client, router=router, personality=self._personality, prompt_manager=self._prompt_manager)
@@ -166,7 +196,11 @@ class Agent:
             if episode_ctx:
                 context_parts.append(episode_ctx)
                 logger.info("Memory: injecting episode context (%d chars)", len(episode_ctx))
-            skill_ctx = await get_skill_context(self._memory)
+            skill_ctx = await get_skill_context(
+                self._memory,
+                skill_manager=self._skill_manager,
+                user_input=user_input,
+            )
             if skill_ctx:
                 context_parts.append(skill_ctx)
                 logger.info("Memory: injecting %s", skill_ctx.split("\n")[0])
@@ -237,7 +271,36 @@ class Agent:
         self._episode_count += 1
         await self._evolution_cycle(agent_result)
 
+        # Phase 6: Skill evolution check (periodic)
+        if self._episode_count % 10 == 0:
+            await self._skill_evolution_check(agent_result)
+
         return agent_result
+
+    async def _skill_evolution_check(self, result: AgentResult) -> None:
+        """Check if any active skills need evolution based on scores."""
+        if not self._skill_manager or not self._settings.skills.evolution.enabled:
+            return
+        try:
+            active = await self._skill_manager.get_active_skills()
+            evo_cfg = self._settings.skills.evolution
+            for skill in active:
+                meta = skill.metadata
+                if (
+                    meta.use_count >= evo_cfg.min_uses_before_evolve
+                    and meta.avg_score < evo_cfg.feedback_threshold
+                ):
+                    logger.info(
+                        "Skill %s underperforming (avg=%.1f, uses=%d) — evolving",
+                        meta.name, meta.avg_score, meta.use_count,
+                    )
+                    await self._skill_manager.evolve_skill(
+                        meta.name,
+                        f"Average score {meta.avg_score:.1f} after {meta.use_count} uses. "
+                        f"Improve clarity, accuracy, and effectiveness.",
+                    )
+        except Exception as exc:
+            logger.warning("Skill evolution check failed: %s", exc)
 
     async def _evolution_cycle(self, result: AgentResult) -> None:
         """Run evolution tasks: prompt scoring, strategy analysis."""

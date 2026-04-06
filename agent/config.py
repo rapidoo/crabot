@@ -184,6 +184,29 @@ class EvolutionConfig(BaseModel):
     protected_roles: list[str] = ["critic"]
 
 
+class SkillsSecurityConfig(BaseModel):
+    min_score: float = 7.0
+    require_llm_review: bool = True
+    auto_reject_on_fail: bool = True
+
+
+class SkillsEvolutionConfig(BaseModel):
+    enabled: bool = True
+    min_uses_before_evolve: int = 5
+    feedback_threshold: float = 6.0
+
+
+class SkillsConfig(BaseModel):
+    enabled: bool = True
+    library_dir: str = "./agent/skills/library"
+    auto_discover: bool = True
+    discovery_sources: list[str] = ["https://github.com/anthropics/skills"]
+    security: SkillsSecurityConfig = SkillsSecurityConfig()
+    evolution: SkillsEvolutionConfig = SkillsEvolutionConfig()
+    max_active_skills: int = 20
+    trigger_match_threshold: float = 0.6
+
+
 class Settings(BaseModel):
     models: ModelsConfig = ModelsConfig()
     sampling: SamplingConfig = SamplingConfig()
@@ -203,6 +226,7 @@ class Settings(BaseModel):
     adaptive: AdaptiveConfig = AdaptiveConfig()
     reflection: ReflectionConfig = ReflectionConfig()
     evolution: EvolutionConfig = EvolutionConfig()
+    skills: SkillsConfig = SkillsConfig()
 
 
 _DEFAULT_CONFIG_PATH = Path(__file__).parent / "config.yaml"
