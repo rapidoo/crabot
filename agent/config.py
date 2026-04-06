@@ -30,7 +30,7 @@ MODEL_PRESETS: dict[str, dict[str, str]] = {
         "planner": "mistral-small3.2",
         "executor": "mistral-small3.2",
         "executor_draft": "ministral-3:3b",
-        "critic": "mistral-small4",
+        "critic": "mistral-small3.2",
         "critic_light": "mistral-small3.2",
     },
 }
@@ -126,6 +126,19 @@ class ContextConfig(BaseModel):
     max_tokens_per_call: int = 32768
     skeleton_threshold: int = 500
     trace_in_context: bool = True
+    compression_threshold: float = 0.50
+    compression_protect_last_n: int = 4
+
+
+class ApprovalConfig(BaseModel):
+    enabled: bool = True
+    dangerous_tools: list[str] = ["code", "tool_create"]
+
+
+class TruncationConfig(BaseModel):
+    enabled: bool = True
+    max_chars: int = 50_000
+    tail_chars: int = 2_000
 
 
 class TelegramConfig(BaseModel):
@@ -176,6 +189,13 @@ class ReflectionConfig(BaseModel):
     auto_apply: bool = False
 
 
+class LessonConfig(BaseModel):
+    enabled: bool = True
+    similarity_threshold: float = 0.85
+    max_in_context: int = 5
+    decay_days: int = 90
+
+
 class EvolutionConfig(BaseModel):
     enabled: bool = False
     max_mutations_per_cycle: int = 3
@@ -209,6 +229,9 @@ class Settings(BaseModel):
     adaptive: AdaptiveConfig = AdaptiveConfig()
     reflection: ReflectionConfig = ReflectionConfig()
     evolution: EvolutionConfig = EvolutionConfig()
+    lessons: LessonConfig = LessonConfig()
+    approval: ApprovalConfig = ApprovalConfig()
+    truncation: TruncationConfig = TruncationConfig()
 
 
 _DEFAULT_CONFIG_PATH = Path(__file__).parent / "config.yaml"
