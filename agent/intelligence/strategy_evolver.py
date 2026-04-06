@@ -10,6 +10,7 @@ Detects patterns like:
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from agent.infra.metrics import MetricsCollector
@@ -76,7 +77,7 @@ def analyze_sot(traces: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def analyze_critic(traces: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Detect critic scoring bias."""
+    """Detect critic scoring bias and propose prompt file modifications."""
     all_scores: list[float] = []
     for t in traces:
         for s in t.get("scores", []):
@@ -88,22 +89,40 @@ def analyze_critic(traces: list[dict[str, Any]]) -> list[dict[str, Any]]:
     avg = sum(all_scores) / len(all_scores)
     actions: list[dict[str, Any]] = []
 
-    if avg > CRITIC_HIGH_BIAS:
-        actions.append({
-            "type": "mutate_prompt",
-            "role": "critic",
-            "observation": f"Critic avg score {avg:.1f} suggests leniency bias",
-            "suggestion": "Add stricter evaluation criteria and lower default scores",
-            "reason": f"Critic bias detected: avg {avg:.1f} > {CRITIC_HIGH_BIAS}",
-        })
-    elif avg < CRITIC_LOW_BIAS:
-        actions.append({
-            "type": "mutate_prompt",
-            "role": "critic",
-            "observation": f"Critic avg score {avg:.1f} suggests harshness bias",
-            "suggestion": "Relax evaluation criteria slightly",
-            "reason": f"Critic bias detected: avg {avg:.1f} < {CRITIC_LOW_BIAS}",
-        })
+    # Read current critic prompt from file
+    prompt_path = Path(__file__).resolve().parent.parent / "prompts" / "critic.md"
+    current_prompt = ""
+    if prompt_path.is_file():
+        current_prompt = prompt_path.read_text(encoding="utf-8")
+
+    if avg > CRITIC_HIGH_BIAS and current_prompt:
+        # Append stricter instructions to the prompt
+        stricter_addition = (
+            "\n\nCalibration note: Be stricter in scoring. "
+            "A score of 8+ should only be given for truly excellent results. "
+            "Default to 6.0 for adequate-but-unremarkable answers. "
+            "Deduct points for: vague answers, missing details, incorrect assumptions."
+        )
+        if "Be stricter" not in current_prompt:
+            actions.append({
+                "type": "modify_source",
+                "target": "agent/prompts/critic.md",
+                "new_value": current_prompt.rstrip() + stricter_addition + "\n",
+                "reason": f"Critic bias detected: avg {avg:.1f} > {CRITIC_HIGH_BIAS} — adding stricter calibration",
+            })
+    elif avg < CRITIC_LOW_BIAS and current_prompt:
+        relaxed_addition = (
+            "\n\nCalibration note: Be more generous in scoring. "
+            "A score of 5.0 should be reserved for genuinely poor results. "
+            "Give credit for partial correctness and reasonable attempts."
+        )
+        if "Be more generous" not in current_prompt:
+            actions.append({
+                "type": "modify_source",
+                "target": "agent/prompts/critic.md",
+                "new_value": current_prompt.rstrip() + relaxed_addition + "\n",
+                "reason": f"Critic bias detected: avg {avg:.1f} < {CRITIC_LOW_BIAS} — relaxing calibration",
+            })
 
     return actions
 

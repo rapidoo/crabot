@@ -75,13 +75,15 @@ class TestAnalyzeCritic:
         traces = [{"scores": [9.0, 9.5, 8.5]} for _ in range(10)]
         actions = analyze_critic(traces)
         assert len(actions) == 1
-        assert "leniency" in actions[0]["observation"]
+        assert actions[0]["type"] == "modify_source"
+        assert "stricter" in actions[0]["reason"]
 
     def test_detects_harshness_bias(self):
         traces = [{"scores": [3.0, 4.0, 4.5]} for _ in range(10)]
         actions = analyze_critic(traces)
         assert len(actions) == 1
-        assert "harshness" in actions[0]["observation"]
+        assert actions[0]["type"] == "modify_source"
+        assert "relaxing" in actions[0]["reason"]
 
     def test_no_bias(self):
         traces = [{"scores": [6.5, 7.0, 7.5]} for _ in range(10)]

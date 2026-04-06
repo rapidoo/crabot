@@ -1,10 +1,14 @@
 """Tests for PromptManager — versioned prompts with A/B testing."""
 
-from unittest.mock import AsyncMock
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from agent.intelligence.prompt_manager import PromptManager
+
+# Patch PROMPTS_DIR to a non-existent path so file backend doesn't interfere
+_NO_PROMPTS = Path("/tmp/_nano_test_no_prompts_8f3a2b1c")
 
 
 @pytest.fixture
@@ -17,6 +21,13 @@ def memory():
     m.promote_prompt = AsyncMock()
     m.update_prompt_stats = AsyncMock()
     return m
+
+
+@pytest.fixture(autouse=True)
+def _no_prompt_files(tmp_path):
+    """Redirect PROMPTS_DIR to an empty tmp_path so file backend doesn't interfere."""
+    with patch("agent.intelligence.prompt_manager.PROMPTS_DIR", tmp_path / "empty_prompts"):
+        yield
 
 
 @pytest.fixture
@@ -134,3 +145,55 @@ class TestPromptManager:
         result = await pm.rollback_prompt("planner")
         assert result is True
         assert pm._cache.get("planner", {}).get("candidate_id") is None
+
+
+class TestPromptFileBackend:
+    """Test the file-based prompt storage."""
+
+    @pytest.mark.asyncio
+    async def test_reads_from_file(self, tmp_path):
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "planner.md").write_text("file-based prompt")
+
+        m = AsyncMock()
+        m.available = False
+        pm = PromptManager(memory=m)
+        with patch("agent.intelligence.prompt_manager.PROMPTS_DIR", prompts_dir):
+            result = await pm.get_prompt("planner", "default")
+        assert result == "file-based prompt"
+
+    @pytest.mark.asyncio
+    async def test_file_takes_priority_over_default(self, tmp_path):
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "critic.md").write_text("custom critic prompt")
+
+        m = AsyncMock()
+        m.available = False
+        pm = PromptManager(memory=m)
+        with patch("agent.intelligence.prompt_manager.PROMPTS_DIR", prompts_dir):
+            result = await pm.get_prompt("critic", "hardcoded default")
+        assert result == "custom critic prompt"
+
+    def test_write_prompt_file_with_backup(self, tmp_path):
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "critic.md").write_text("v1 content")
+
+        pm = PromptManager(memory=None)
+        with patch("agent.intelligence.prompt_manager.PROMPTS_DIR", prompts_dir):
+            pm._write_prompt_file("critic", "v2 content")
+        assert (prompts_dir / "critic.md").read_text().strip() == "v2 content"
+        assert (prompts_dir / "critic.md.bak").read_text() == "v1 content"
+
+    @pytest.mark.asyncio
+    async def test_no_file_falls_to_default(self, tmp_path):
+        prompts_dir = tmp_path / "empty_prompts"
+        # Don't create the dir
+        m = AsyncMock()
+        m.available = False
+        pm = PromptManager(memory=m)
+        with patch("agent.intelligence.prompt_manager.PROMPTS_DIR", prompts_dir):
+            result = await pm.get_prompt("planner", "the default")
+        assert result == "the default"

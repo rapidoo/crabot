@@ -2,18 +2,25 @@
 
 Allows the agent to propose, test, and promote prompt mutations
 for planner, critic, and triage roles.
+
+Prompt resolution order: file (agent/prompts/) > Neo4j > hardcoded default.
+When a prompt is promoted, the corresponding file is updated automatically.
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agent.memory.neo4j_client import MemoryClient
 
 logger = logging.getLogger(__name__)
+
+# Directory where prompt files live (tracked in git)
+PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
 # Default A/B test window: how many episodes before comparing scores
 DEFAULT_EVAL_WINDOW = 10
@@ -44,31 +51,64 @@ class PromptManager:
     def available(self) -> bool:
         return self._memory is not None and getattr(self._memory, "available", False)
 
+    def _read_prompt_file(self, role: str) -> str | None:
+        """Read a prompt from the local file system (agent/prompts/<role>.md)."""
+        path = PROMPTS_DIR / f"{role}.md"
+        if path.is_file():
+            try:
+                return path.read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                logger.warning("Failed to read prompt file %s: %s", path, exc)
+        return None
+
+    def _write_prompt_file(self, role: str, content: str) -> bool:
+        """Write a prompt to the local file system (agent/prompts/<role>.md)."""
+        path = PROMPTS_DIR / f"{role}.md"
+        try:
+            PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
+            # Version backup
+            if path.exists():
+                bak = PROMPTS_DIR / f"{role}.md.bak"
+                bak.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+            path.write_text(content.strip() + "\n", encoding="utf-8")
+            logger.info("Prompt file updated: %s", path)
+            return True
+        except OSError as exc:
+            logger.warning("Failed to write prompt file %s: %s", path, exc)
+            return False
+
     async def get_prompt(self, role: str, default: str) -> str:
         """Get the current prompt for a role.
 
+        Resolution order: file > Neo4j (A/B tested) > hardcoded default.
         If a candidate is in A/B testing, alternates between active and candidate.
         Returns the default if no prompt version exists.
         """
-        if not self.available:
-            return default
+        # If A/B testing is active, use Neo4j path (candidate vs active)
+        if self.available:
+            if role not in self._cache:
+                await self._load_cache(role)
+            cached = self._cache.get(role)
+            if cached and cached.get("candidate_content"):
+                count = self._episode_counter.get(role, 0)
+                self._episode_counter[role] = count + 1
+                if count % 2 == 1:  # Odd episodes use candidate
+                    return cached["candidate_content"]
+                if cached.get("active_content"):
+                    return cached["active_content"]
 
-        # Load from Neo4j if not cached
-        if role not in self._cache:
-            await self._load_cache(role)
+        # File-based prompt (highest priority outside A/B testing)
+        file_prompt = self._read_prompt_file(role)
+        if file_prompt:
+            return file_prompt
 
-        cached = self._cache.get(role)
-        if not cached or not cached.get("active_content"):
-            return default
+        # Neo4j active prompt
+        if self.available:
+            cached = self._cache.get(role)
+            if cached and cached.get("active_content"):
+                return cached["active_content"]
 
-        # If there's a candidate, alternate for A/B testing
-        if cached.get("candidate_content"):
-            count = self._episode_counter.get(role, 0)
-            self._episode_counter[role] = count + 1
-            if count % 2 == 1:  # Odd episodes use candidate
-                return cached["candidate_content"]
-
-        return cached["active_content"]
+        return default
 
     async def get_current_prompt_id(self, role: str) -> str | None:
         """Return the ID of the prompt that was last served (for score tracking)."""
@@ -168,15 +208,18 @@ class PromptManager:
             delta = candidate_score - active_score
             if delta >= MIN_PROMOTION_DELTA:
                 await self._memory.promote_prompt(role, candidate_id)
+                promoted_content = cached.get("candidate_content", "")
                 # Update cache
                 self._cache[role] = {
                     "active_id": candidate_id,
-                    "active_content": cached.get("candidate_content", ""),
+                    "active_content": promoted_content,
                     "active_version": cached.get("candidate_version", 0),
                     "candidate_id": None,
                     "candidate_content": None,
                 }
                 self._episode_counter[role] = 0
+                # Write promoted prompt to file (visible in git diff)
+                self._write_prompt_file(role, promoted_content)
                 logger.info(
                     "Prompt promoted for %s: %s (delta=+%.2f, %.1f → %.1f)",
                     role, candidate_id, delta, active_score, candidate_score,

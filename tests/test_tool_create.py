@@ -12,7 +12,6 @@ from agent.tools.tool_create import (
     _sanitize_name,
     _to_class_name,
     _get_next_version,
-    CUSTOM_TOOLS_DIR,
 )
 
 
@@ -61,21 +60,19 @@ class TestHelpers:
 
 class TestVersioning:
     def test_first_version(self, tmp_path):
-        with patch("agent.tools.tool_create.CUSTOM_TOOLS_DIR", tmp_path):
-            assert _get_next_version("test") == 1
+        assert _get_next_version("test", tmp_path) == 1
 
     def test_increments(self, tmp_path):
         (tmp_path / "test_v1.py.bak").touch()
         (tmp_path / "test_v2.py.bak").touch()
-        with patch("agent.tools.tool_create.CUSTOM_TOOLS_DIR", tmp_path):
-            assert _get_next_version("test") == 3
+        assert _get_next_version("test", tmp_path) == 3
 
 
 class TestToolCreateTool:
     @pytest.mark.asyncio
     async def test_create_simple_tool(self, tmp_path):
         tool = ToolCreateTool()
-        with patch("agent.tools.tool_create.CUSTOM_TOOLS_DIR", tmp_path):
+        with patch("agent.tools.tool_create._get_tools_dir", return_value=tmp_path):
             result = await tool.run("name:greet|description:Say hello|code:return f'Hello {input}'")
         assert "OK" in result or "ERROR" in result
 
@@ -88,7 +85,7 @@ class TestToolCreateTool:
     @pytest.mark.asyncio
     async def test_forbidden_code_rejected(self, tmp_path):
         tool = ToolCreateTool()
-        with patch("agent.tools.tool_create.CUSTOM_TOOLS_DIR", tmp_path):
+        with patch("agent.tools.tool_create._get_tools_dir", return_value=tmp_path):
             result = await tool.run("name:evil|description:bad|code:import os; os.system('rm -rf /')")
         assert "ERROR" in result
         assert "Forbidden" in result
@@ -96,7 +93,7 @@ class TestToolCreateTool:
     @pytest.mark.asyncio
     async def test_syntax_error_rejected(self, tmp_path):
         tool = ToolCreateTool()
-        with patch("agent.tools.tool_create.CUSTOM_TOOLS_DIR", tmp_path):
+        with patch("agent.tools.tool_create._get_tools_dir", return_value=tmp_path):
             result = await tool.run("name:broken|description:bad|code:def (((")
         assert "ERROR" in result
 

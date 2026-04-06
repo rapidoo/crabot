@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -90,6 +92,7 @@ class ActionApplier:
             "escalate_model": self._apply_model,
             "disable_tool": self._apply_disable_tool,
             "create_skill": self._apply_create_skill,
+            "modify_source": self._apply_modify_source,
         }.get(action_type)
 
         if handler is None:
@@ -186,6 +189,55 @@ class ActionApplier:
             action.get("reason", ""), reflection_id,
         )
 
+    async def _apply_modify_source(
+        self, action: dict[str, Any], reflection_id: str | None
+    ) -> Mutation | None:
+        """Modify a source file directly. The agent writes, the trainer reviews via git."""
+        target_path = action.get("target", "")
+        new_content = action.get("new_value", action.get("content", ""))
+        if not target_path or not new_content:
+            return None
+
+        # Resolve path relative to repo root
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        full_path = (repo_root / target_path).resolve()
+
+        # Safety: must stay within the repo
+        if not str(full_path).startswith(str(repo_root)):
+            logger.warning("modify_source blocked: path escapes repo: %s", target_path)
+            return None
+
+        # Safety: check protected files
+        for protected in self._evo.protected_files:
+            protected_abs = (repo_root / protected).resolve()
+            if full_path == protected_abs:
+                logger.warning("modify_source blocked: protected file: %s", target_path)
+                return None
+
+        # Read previous content for rollback
+        prev_content = None
+        if full_path.exists():
+            prev_content = full_path.read_text(encoding="utf-8")
+            # Skip if content is identical
+            if prev_content.strip() == new_content.strip():
+                logger.info("modify_source skipped: no change for %s", target_path)
+                return None
+            # Create .bak version
+            bak_path = full_path.with_suffix(full_path.suffix + ".bak")
+            shutil.copy2(full_path, bak_path)
+
+        # Write new content
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_text(new_content, encoding="utf-8")
+        logger.info("Source modified: %s", target_path)
+
+        return self._make_mutation(
+            "modify_source", target_path,
+            hashlib.sha256((prev_content or "").encode()).hexdigest()[:12],
+            hashlib.sha256(new_content.encode()).hexdigest()[:12],
+            action.get("reason", ""), reflection_id,
+        )
+
     # ------------------------------------------------------------------
     # Restore (rollback helper)
     # ------------------------------------------------------------------
@@ -201,6 +253,13 @@ class ActionApplier:
             self._disabled_tools.discard(tool_name)
             from agent.tools.registry import enable_tool
             enable_tool(tool_name)
+        elif mutation.action_type == "modify_source":
+            repo_root = Path(__file__).resolve().parent.parent.parent
+            full_path = repo_root / mutation.target
+            bak_path = full_path.with_suffix(full_path.suffix + ".bak")
+            if bak_path.exists():
+                shutil.copy2(bak_path, full_path)
+                logger.info("Restored %s from backup", mutation.target)
 
     # ------------------------------------------------------------------
     # Persistence
