@@ -252,12 +252,13 @@ class SecurityReviewTool:
         # Phase 1: Static pattern analysis
         if content_type in ("code", "skill"):
             findings.extend(self._check_patterns(content, _CODE_DANGER_PATTERNS))
-            findings.extend(self._check_patterns(content, _EXFILTRATION_PATTERNS))
             findings.extend(_ast_review(content))
 
         if content_type in ("prompt", "skill"):
             findings.extend(self._check_patterns(content, _PROMPT_INJECTION_PATTERNS))
-            findings.extend(self._check_patterns(content, _EXFILTRATION_PATTERNS))
+
+        # Exfiltration patterns apply to all content types (run once)
+        findings.extend(self._check_patterns(content, _EXFILTRATION_PATTERNS))
 
         # Phase 2: LLM-based semantic review (optional)
         if self._use_llm and self._client and self._router:

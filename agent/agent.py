@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -63,7 +64,6 @@ class Agent:
             spider_tool = None
             try:
                 from agent.tools.spider_search import SpiderSearchTool
-                import os
                 api_key = os.environ.get("SPIDER_API_KEY", "")
                 if api_key:
                     spider_tool = SpiderSearchTool(api_key=api_key)

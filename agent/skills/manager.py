@@ -401,9 +401,10 @@ class SkillManager:
             return f"{m.group(1)}/{relative_path}"
 
         # For GitHub repo URLs
-        m = re.match(r"(https?://github\.com/[^/]+/[^/]+)", base_url)
+        m = re.match(r"https?://github\.com/([^/]+)/([^/]+)", base_url)
         if m:
-            return f"https://raw.githubusercontent.com/{base_url.split('github.com/')[1].split('/')[0]}/{base_url.split('github.com/')[1].split('/')[1]}/main/{relative_path}"
+            owner, repo = m.group(1), m.group(2)
+            return f"https://raw.githubusercontent.com/{owner}/{repo}/main/{relative_path}"
 
         # Generic: join base + relative
         base = base_url.rsplit("/", 1)[0] if not base_url.endswith("/") else base_url.rstrip("/")
