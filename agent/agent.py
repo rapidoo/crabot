@@ -124,13 +124,18 @@ class Agent:
             else:
                 logger.info("Resuming previous plan from step %d", resume_after + 1)
                 return await self._execute_pipeline(
-                    user_input, plan, resume_after, start, on_progress
+                    user_input, plan, resume_after, start, on_progress, phase_timings
                 )
+
+        # Phase timings for self-diagnostics
+        phase_timings: dict[str, float] = {}
 
         # Phase 0: Triage
         logger.info("Phase 0: Triage...")
         await self._notify(on_progress, "triage", "Classifying input...")
+        t0 = time.monotonic()
         complexity = await self._triage.classify(user_input)
+        phase_timings["triage"] = time.monotonic() - t0
         logger.info("Triage: %s", complexity)
 
         if complexity == "simple":
@@ -153,12 +158,14 @@ class Agent:
                 goal=user_input[:100],
                 results=[ScoredResult(step=dummy_step, result=result, score=score)],
             )
-            self._write_trace(user_input, agent_result, elapsed, simple=True)
+            phase_timings["execute"] = time.monotonic() - t0 - phase_timings["triage"]
+            self._write_trace(user_input, agent_result, elapsed, simple=True, phase_timings=phase_timings)
             return agent_result
 
         # Phase 0.5: Memory read + skill injection
         self._cached_input_entities = None
         context_parts: list[str] = []
+        t_mem = time.monotonic()
         if self._memory.available:
             logger.info("Phase 0.5: Memory read...")
             await self._notify(on_progress, "memory", "Loading context...")
@@ -190,14 +197,18 @@ class Agent:
 
         context = "\n\n".join(context_parts)
 
+        phase_timings["memory"] = time.monotonic() - t_mem
+
         # Phase 1: Plan
         logger.info("Phase 1: Planning...")
         await self._notify(on_progress, "planning", "Building plan...")
+        t_plan = time.monotonic()
         plan = await self._planner.plan(user_input, context=context)
+        phase_timings["planning"] = time.monotonic() - t_plan
         logger.info("Plan: %s (%d steps)", plan.goal, len(plan.steps))
         await self._notify(on_progress, "planning", f"Plan: {len(plan.steps)} steps")
 
-        return await self._execute_pipeline(user_input, plan, 0, start, on_progress)
+        return await self._execute_pipeline(user_input, plan, 0, start, on_progress, phase_timings)
 
     async def _execute_pipeline(
         self,
@@ -206,6 +217,7 @@ class Agent:
         resume_after: int,
         start: float,
         on_progress: ProgressCallback = None,
+        phase_timings: dict[str, float] | None = None,
     ) -> AgentResult:
         """Execute the plan→execute→critique pipeline."""
         from agent.schemas import Plan
@@ -215,8 +227,12 @@ class Agent:
         if self._settings.recovery.persist_cursor:
             self._state.save_plan(plan, user_input=user_input)
 
+        if phase_timings is None:
+            phase_timings = {}
+
         # Phase 2: Execute
         logger.info("Phase 2: Executing...")
+        t_exec = time.monotonic()
         total_steps = len(plan.steps)
         await self._notify(on_progress, "executing", f"Step 0/{total_steps}")
 
@@ -232,10 +248,14 @@ class Agent:
             plan, on_step_done=_on_step_done, resume_after=resume_after
         )
 
+        phase_timings["execute"] = time.monotonic() - t_exec
+
         # Phase 3: Critique
         logger.info("Phase 3: Critiquing...")
+        t_critic = time.monotonic()
         await self._notify(on_progress, "critiquing", "Evaluating quality...")
         scored = await self._critic.evaluate(plan, results)
+        phase_timings["critique"] = time.monotonic() - t_critic
 
         # Clear state on success
         self._state.clear()
@@ -244,7 +264,7 @@ class Agent:
         logger.info("=== Agent done in %.1fs", elapsed)
 
         agent_result = AgentResult(goal=plan.goal, results=scored)
-        self._write_trace(user_input, agent_result, elapsed)
+        self._write_trace(user_input, agent_result, elapsed, phase_timings=phase_timings)
 
         # Phase 4: Memory write — persist episode + extract skills
         if self._memory.available:
@@ -361,12 +381,38 @@ class Agent:
         result: AgentResult,
         elapsed: float,
         simple: bool = False,
+        phase_timings: dict[str, float] | None = None,
     ) -> None:
-        """Append a JSONL trace entry."""
+        """Append a detailed JSONL trace entry.
+
+        Logs per-step details (tool, input, output, errors, critic breakdown)
+        so the agent can read its own logs for self-correction.
+        """
         trace_path = Path(self._settings.logging.trace_file)
         trace_path.parent.mkdir(parents=True, exist_ok=True)
 
-        entry = {
+        # Build detailed step records
+        step_details = []
+        for sr in result.results:
+            detail: dict[str, Any] = {
+                "step_id": sr.step.id,
+                "tool": sr.step.tool,
+                "input": sr.step.input[:300],
+                "output": sr.result.output[:500],
+                "expected": sr.step.expected_output[:200],
+                "score": sr.score.final_score,
+                "scores_breakdown": sr.score.scores,
+                "retry": sr.score.retry,
+            }
+            if sr.score.reason:
+                detail["reason"] = sr.score.reason
+            # Detect errors in output
+            if sr.result.output.startswith("ERROR"):
+                detail["error"] = sr.result.output[:300]
+            step_details.append(detail)
+
+        entry: dict[str, Any] = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "input": user_input[:500],
             "goal": result.goal,
             "steps": len(result.results),
@@ -374,6 +420,19 @@ class Agent:
             "elapsed_s": round(elapsed, 2),
             "path": "simple" if simple else "complex",
             "memory": self._memory.available,
+            "step_details": step_details,
         }
+        if phase_timings:
+            entry["timings"] = {k: round(v, 2) for k, v in phase_timings.items()}
+
+        # Flag episodes with errors or low scores for easy filtering
+        errors = [d for d in step_details if "error" in d]
+        if errors:
+            entry["has_errors"] = True
+            entry["error_count"] = len(errors)
+        low_scores = [d for d in step_details if d["score"] < 6.5]
+        if low_scores:
+            entry["has_low_scores"] = True
+
         with open(trace_path, "a") as f:
             f.write(json.dumps(entry) + "\n")
