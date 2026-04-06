@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from agent.config import get_settings
 from agent.infra.metrics import MetricsCollector
+from agent.intelligence.prompt_manager import PromptManager
 from agent.models.ollama_client import OllamaClient, ChatResponse
 from agent.models.router import ModelRouter
 from agent.schemas import Plan, Step, StepResult, CriticScore, ScoredResult
@@ -90,7 +91,7 @@ class Critic:
         client: OllamaClient | None = None,
         router: ModelRouter | None = None,
         executor: object | None = None,
-        prompt_manager: object | None = None,
+        prompt_manager: PromptManager | None = None,
     ):
         settings = get_settings()
         self._client = client or OllamaClient(
@@ -153,8 +154,8 @@ class Critic:
         if self._prompt_manager and hasattr(self._prompt_manager, "get_prompt"):
             try:
                 return await self._prompt_manager.get_prompt("critic", CRITIC_SYSTEM_PROMPT)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to get evolved critic prompt: %s", exc)
         return CRITIC_SYSTEM_PROMPT
 
     async def _score_step(self, step: Step, result: StepResult, *, high_stakes: bool = False) -> CriticScore:

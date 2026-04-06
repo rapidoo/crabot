@@ -17,7 +17,7 @@ class MetricsCollector:
     def __init__(self, trace_file: str | Path):
         self._path = Path(trace_file)
 
-    def _load_last(self, n: int) -> list[dict]:
+    def load_last(self, n: int) -> list[dict]:
         """Load the last N trace entries."""
         if not self._path.exists():
             return []
@@ -36,7 +36,7 @@ class MetricsCollector:
 
     def get_scores(self, task_type: str = "default", limit: int = 50) -> list[float]:
         """Flat list of final scores, optionally filtered by task type."""
-        traces = self._load_last(limit)
+        traces = self.load_last(limit)
         scores: list[float] = []
         for t in traces:
             if task_type != "default" and t.get("path") != task_type:
@@ -48,7 +48,7 @@ class MetricsCollector:
 
     def summary(self, last_n: int = 100) -> dict:
         """Aggregate stats over the last N episodes."""
-        traces = self._load_last(last_n)
+        traces = self.load_last(last_n)
         if not traces:
             return {"total_episodes": 0}
 
@@ -91,7 +91,7 @@ class MetricsCollector:
 
     def model_stats(self, task_type: str = "default") -> dict[str, float]:
         """Per-model average scores (for router learning)."""
-        traces = self._load_last(200)
+        traces = self.load_last(200)
         by_model: dict[str, list[float]] = defaultdict(list)
         for t in traces:
             if task_type != "default" and t.get("path") != task_type:

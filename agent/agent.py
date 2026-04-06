@@ -249,9 +249,14 @@ class Agent:
             sum(r.score.final_score for r in result.results) / len(result.results)
             if result.results else 0.0
         )
-        for role in ("planner", "critic"):
-            await self._prompt_manager.record_score(role, avg_score)
-            await self._prompt_manager.evaluate_and_promote(role)
+        await asyncio.gather(
+            self._prompt_manager.record_score("planner", avg_score),
+            self._prompt_manager.record_score("critic", avg_score),
+        )
+        await asyncio.gather(
+            self._prompt_manager.evaluate_and_promote("planner"),
+            self._prompt_manager.evaluate_and_promote("critic"),
+        )
 
         # Run strategy evolution every 20 episodes
         if self._episode_count % 20 == 0:

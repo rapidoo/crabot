@@ -154,6 +154,8 @@ class ActionApplier:
             return None
 
         self._disabled_tools.add(tool_name)
+        from agent.tools.registry import disable_tool
+        disable_tool(tool_name)
         logger.info("Tool disabled: %s", tool_name)
 
         return self._make_mutation(
@@ -197,6 +199,8 @@ class ActionApplier:
         elif mutation.action_type == "disable_tool":
             tool_name = mutation.target.replace("tools.", "")
             self._disabled_tools.discard(tool_name)
+            from agent.tools.registry import enable_tool
+            enable_tool(tool_name)
 
     # ------------------------------------------------------------------
     # Persistence
@@ -253,6 +257,9 @@ class ActionApplier:
 
             if "disabled_tools" in data:
                 self._disabled_tools = set(data["disabled_tools"])
+                from agent.tools.registry import disable_tool
+                for tool_name in self._disabled_tools:
+                    disable_tool(tool_name)
 
             if "models" in data:
                 for role, model in data["models"].items():

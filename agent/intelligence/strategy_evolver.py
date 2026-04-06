@@ -9,10 +9,10 @@ Detects patterns like:
 
 from __future__ import annotations
 
-import json
 import logging
-from pathlib import Path
 from typing import Any
+
+from agent.infra.metrics import MetricsCollector
 
 logger = logging.getLogger(__name__)
 
@@ -22,26 +22,6 @@ SOT_WASTE_MIN_STEPS = 10
 CRITIC_BIAS_MIN_SAMPLES = 20
 CRITIC_HIGH_BIAS = 8.5   # Avg score above this suggests lenient critic
 CRITIC_LOW_BIAS = 5.0    # Avg score below this suggests harsh critic
-
-
-def _load_traces(trace_file: str, limit: int = 100) -> list[dict[str, Any]]:
-    """Load the last N trace entries from the JSONL file."""
-    path = Path(trace_file)
-    if not path.exists():
-        return []
-    entries: list[dict[str, Any]] = []
-    try:
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        entries.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        continue
-    except Exception as exc:
-        logger.warning("Failed to load traces: %s", exc)
-    return entries[-limit:]
 
 
 def analyze_triage(traces: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -59,14 +39,10 @@ def analyze_triage(traces: list[dict[str, Any]]) -> list[dict[str, Any]]:
     actions: list[dict[str, Any]] = []
     if misclass_rate > 0.2:
         actions.append({
-            "type": "adjust_threshold",
-            "target": "triage_sensitivity",
-            "observation": f"{misclass_rate:.0%} of simple-path results scored below {TRIAGE_MISCLASS_THRESHOLD}",
-            "suggestion": "escalate_model",
+            "type": "escalate_model",
             "task_type": "triage",
-            "from": "e4b",
-            "to": "26b",
-            "reason": f"Triage misclassification rate {misclass_rate:.0%}",
+            "to": "gemma4:26b",
+            "reason": f"Triage misclassification rate {misclass_rate:.0%} — simple-path results scored below {TRIAGE_MISCLASS_THRESHOLD}",
         })
     return actions
 
@@ -138,7 +114,7 @@ async def evolve_strategy(trace_file: str) -> list[dict[str, Any]]:
     Each suggestion is a dict with 'type', 'target', 'reason', and specifics.
     These can be passed to ActionApplier.apply() or logged for human review.
     """
-    traces = _load_traces(trace_file)
+    traces = MetricsCollector(trace_file).load_last(100)
     if not traces:
         logger.info("Strategy evolver: no traces to analyze")
         return []

@@ -12,6 +12,7 @@ from agent.config import get_settings
 from agent.models.ollama_client import OllamaClient, ChatResponse
 from agent.models.router import ModelRouter
 from agent.infra.retry import with_retry, MaxRetriesExceeded
+from agent.intelligence.prompt_manager import PromptManager
 from agent.personality.loader import Personality
 from agent.schemas import Plan
 from agent.tools.registry import list_tools_with_descriptions
@@ -105,7 +106,7 @@ class Planner:
         client: OllamaClient | None = None,
         router: ModelRouter | None = None,
         personality: Personality | None = None,
-        prompt_manager: object | None = None,
+        prompt_manager: PromptManager | None = None,
     ):
         settings = get_settings()
         self._client = client or OllamaClient(
@@ -165,29 +166,7 @@ class Planner:
                 if evolved != default:
                     logger.debug("Using evolved planner prompt")
                 return evolved
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed to get evolved planner prompt: %s", exc)
         return default
 
-    def _build_messages(
-        self, user_input: str, context: str
-    ) -> list[dict[str, str]]:
-        # Note: for sync compatibility, use the default prompt here.
-        # The async version is used via _attempt_plan.
-        system_prompt = _build_system_prompt()
-        # Inject AGENTS.md rules if available
-        if self._personality and self._personality.agents:
-            system_prompt += f"\n\nOperational rules:\n{self._personality.agents}"
-        messages: list[dict[str, str]] = [
-            {"role": "system", "content": system_prompt},
-        ]
-        if context:
-            messages.append(
-                {
-                    "role": "user",
-                    "content": f"Memory context:\n{context}\n\nUser request:\n{user_input}",
-                }
-            )
-        else:
-            messages.append({"role": "user", "content": user_input})
-        return messages
