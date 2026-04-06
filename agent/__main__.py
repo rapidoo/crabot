@@ -80,6 +80,7 @@ def _run_oneshot() -> None:
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+    logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
 
     async def _run():
         agent = Agent(settings)
@@ -102,6 +103,8 @@ def _run_repl() -> None:
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+    # Silence noisy Neo4j notifications (property/label not found warnings)
+    logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
 
     identity = load_personality().identity
     print(f"\n{identity.emoji} {identity.name} — Agent IA local")
