@@ -64,8 +64,13 @@ graph LR
         FileIO["file_io"]
         Search["search"]
         WebSearch["web_search"]
+        SpiderSearch["spider_search"]
         ToolCreate["tool_create"]
         Custom["custom/*"]
+    end
+
+    subgraph Prompts
+        PromptFiles["planner.md / critic.md / triage.md"]
     end
 
     subgraph Memory
@@ -96,6 +101,8 @@ graph LR
     Models --> OllamaClient
     Tools --> Registry
     Intelligence --> Memory
+    Intelligence --> Prompts
+    Core --> Prompts
     Infra --> Core
 ```
 
@@ -187,7 +194,8 @@ Les transactions Neo4j sont atomiques. Les embeddings sont generes pour chaque e
 |--------|-----------|----------|----------------|
 | **Core** | `agent/core/` | `triage.py`, `planner.py`, `executor.py`, `critic.py`, `heartbeat.py`, `goal_engine.py`, `scheduler.py`, `reflection.py`, `job_manager.py` | Pipeline principal + orchestration des taches proactives |
 | **Models** | `agent/models/` | `ollama_client.py`, `router.py` | Client HTTP async vers Ollama (`/api/chat`) + routage multi-modele |
-| **Tools** | `agent/tools/` | `base.py`, `registry.py`, `code_exec.py`, `file_io.py`, `search.py`, `web_search.py`, `spider_search.py`, `tool_create.py`, `custom/` | Registry factory + 7 outils builtin + outils custom auto-decouverts |
+| **Tools** | `agent/tools/` | `base.py`, `registry.py`, `code_exec.py`, `file_io.py`, `search.py`, `web_search.py`, `spider_search.py`, `tool_create.py`, `custom/` | Registry factory + 6 outils builtin + outils custom auto-decouverts |
+| **Prompts** | `agent/prompts/` | `triage.md`, `planner.md`, `critic.md` | Templates de prompts systeme externalises — modifiables par l'agent via evolution |
 | **Memory** | `agent/memory/` | `neo4j_client.py`, `embedder.py`, `entity_extractor.py`, `schemas.cypher` | Graphe Neo4j (episodes, entites, skills) + embeddings + NER |
 | **Intelligence** | `agent/intelligence/` | `loop_detection.py`, `dreaming.py`, `skill_injector.py`, `prompt_manager.py`, `action_applier.py`, `strategy_evolver.py`, `tool_evolution.py` | Autonomie : detection de boucles, consolidation memoire, evolution |
 | **Personality** | `agent/personality/` | `loader.py` | Chargement des 5 fichiers `workspace/` Markdown |
@@ -277,8 +285,9 @@ Le thinking mode (`<|think|>`) est active pour le Planner et le Critic (raisonne
 - [x] Dreaming — consolidation memorielle bio-inspiree (frequence, pertinence, diversite, recence)
 - [x] Loop detection — 3 detecteurs (repeat, circuit-breaker, ping-pong)
 - [x] Seuil de qualite adaptatif (calibre sur la distribution des scores passes)
-- [x] Reflection — auto-analyse des metriques avec ajustement des parametres
-- [x] Strategy evolution — mutation de prompts et configuration
+- [x] Reflection — auto-analyse des metriques avec ajustement des parametres (desactive par defaut)
+- [x] Strategy evolution — mutation de prompts et configuration (evolution active par defaut)
+- [x] Auto-modification autonome — l'agent modifie ses propres fichiers source (prompts, tools, config)
 - [x] Tool evolution — amelioration des outils via feedback
 - [x] Skill injection — injection des skills apprises dans le contexte Planner
 
@@ -389,7 +398,7 @@ AgentResult
 
 Mutation
 ├── id: str
-├── action_type: str  (adjust_threshold | escalate_model | disable_tool | create_skill | mutate_prompt)
+├── action_type: str  (adjust_threshold | escalate_model | disable_tool | create_skill | modify_source)
 ├── target: str
 ├── previous_value / new_value: Any
 ├── reason: str
@@ -433,7 +442,7 @@ Toute la configuration est centralisee dans `agent/config.yaml`. Les secrets son
 | `feedback` | Scoring utilisateur (good: 9.0, bad: 2.0) |
 | `adaptive` | Calibrage auto du seuil (methode, min samples) |
 | `reflection` | Analyse des N derniers episodes |
-| `evolution` | Mutations max par cycle, roles proteges |
+| `evolution` | Auto-modification activee, mutations max par cycle, roles proteges, fichiers proteges |
 
 ---
 
