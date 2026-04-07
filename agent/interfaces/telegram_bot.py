@@ -116,6 +116,7 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("jobs", self._handle_status))
         self._app.add_handler(CommandHandler("cancel", self._handle_cancel))
         self._app.add_handler(CommandHandler("clean", self._handle_clean))
+        self._app.add_handler(CommandHandler("evolve", self._handle_evolve))
         self._app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
         )
@@ -175,7 +176,8 @@ class TelegramBot:
             "/clean — clear conversation history\n"
             "/good — validate the last result\n"
             "/bad [reason] — reject the last result\n"
-            "/stats — show performance metrics\n\n"
+            "/stats — show performance metrics\n"
+            "/evolve — evolve workspace from lessons\n\n"
             "Examples:\n"
             "• What is the capital of France?\n"
             "• Write a Python function to sort a list\n"
@@ -352,6 +354,21 @@ class TelegramBot:
             for k, v in by_type.items():
                 lines.append(f"    {k}: {v:.1f}")
         await update.message.reply_text("\n".join(lines))
+
+    async def _handle_evolve(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        if not self._is_allowed(update.effective_user.id):
+            return
+        await update.message.reply_text("Évolution du workspace en cours...")
+        try:
+            modified = await self._agent._evolve_workspace()
+            if modified:
+                await update.message.reply_text(f"Workspace mis à jour : {', '.join(modified)}")
+            else:
+                await update.message.reply_text("Pas de changement — pas assez de lessons.")
+        except Exception as exc:
+            await update.message.reply_text(f"Erreur : {exc}")
 
     # -- Job callbacks ---------------------------------------------------------
 

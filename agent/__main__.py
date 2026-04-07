@@ -63,6 +63,7 @@ def _print_help() -> None:
     print("  /goals       List active goals")
     print("  /goal <desc> Create a new goal")
     print("  /clean       Clear conversation history")
+    print("  /evolve      Evolve workspace files from lessons")
     print("  /quit        Exit")
 
 
@@ -268,6 +269,14 @@ async def _handle_command(
             print("  Noted — negative feedback saved.")
         else:
             print("  Neo4j not connected.")
+
+    elif command == "/evolve":
+        print("  Evolving workspace files from lessons...")
+        modified = await agent._evolve_workspace()
+        if modified:
+            print(f"  Updated: {', '.join(modified)}")
+        else:
+            print("  No changes — not enough lessons or Neo4j unavailable.")
 
     else:
         print(f"  Unknown command: {command}. Type /help")

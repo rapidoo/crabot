@@ -322,7 +322,7 @@ class Agent:
             self._prompt_manager.evaluate_and_promote("critic"),
         )
 
-        # Run strategy evolution every 20 episodes
+        # Run strategy evolution + workspace evolution every 20 episodes
         if self._episode_count % 20 == 0:
             try:
                 from agent.intelligence.strategy_evolver import evolve_strategy
@@ -331,6 +331,30 @@ class Agent:
                     await self._action_applier.apply(suggestions)
             except Exception as exc:
                 logger.warning("Strategy evolution failed: %s", exc)
+
+            await self._evolve_workspace()
+
+    async def _evolve_workspace(self) -> list[str]:
+        """Synthesize lessons into workspace personality files."""
+        if not self._memory.available:
+            return []
+        try:
+            from agent.intelligence.workspace_evolver import evolve_workspace
+            from agent.models.router import ModelRouter
+            router = ModelRouter(self._settings)
+            modified = await evolve_workspace(
+                client=self._client,
+                router=router,
+                memory=self._memory,
+            )
+            if modified:
+                from agent.personality.loader import load_personality
+                self._personality = load_personality()
+                logger.info("Workspace evolved: %s — personality reloaded", modified)
+            return modified
+        except Exception as exc:
+            logger.warning("Workspace evolution failed: %s", exc)
+            return []
 
     async def _persist_memory(
         self, user_input: str, result: AgentResult

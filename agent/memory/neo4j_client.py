@@ -538,6 +538,32 @@ class MemoryClient:
             logger.warning("Lesson retrieval failed: %s", exc)
             return []
 
+    async def get_high_confidence_lessons(
+        self,
+        min_confidence: float = 2.0,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Retrieve lessons with high confidence for workspace evolution."""
+        if not self._available:
+            return []
+        try:
+            async with self._driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (l:Lesson) WHERE l.confidence >= $min_conf
+                    RETURN l.id AS id, l.rule AS rule, l.context AS context,
+                           l.category AS category, l.confidence AS confidence,
+                           l.times_reinforced AS times_reinforced
+                    ORDER BY l.confidence DESC
+                    LIMIT $limit
+                    """,
+                    min_conf=min_confidence, limit=limit,
+                )
+                return [dict(r) async for r in result]
+        except Exception as exc:
+            logger.warning("High-confidence lesson query failed: %s", exc)
+            return []
+
     async def persist_goal(
         self,
         goal_id: str,
