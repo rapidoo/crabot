@@ -367,10 +367,15 @@ class Supervisor:
         from agent.core.job_manager import JobManager
 
         # Create a lightweight agent proxy for the bot
-        proxy = _AgentProxy(self)
+        # Connect a real MemoryClient so /goal, /goals etc. work in Telegram
+        from agent.memory.neo4j_client import MemoryClient
+        memory = MemoryClient()
+        await memory.connect()
+
+        proxy = _AgentProxy(self, memory=memory)
         job_manager = JobManager(
             agent=proxy,
-            memory=_MemoryStub(),
+            memory=memory,
             max_concurrent=self._settings.daemon.max_concurrent,
         )
         bot = TelegramBot(proxy, self._settings, job_manager=job_manager)
@@ -380,9 +385,10 @@ class Supervisor:
 class _AgentProxy:
     """Lightweight proxy that makes the Supervisor look like an Agent to TelegramBot."""
 
-    def __init__(self, supervisor: Supervisor):
+    def __init__(self, supervisor: Supervisor, memory=None):
         self._supervisor = supervisor
         self._last_episode_id: str | None = None
+        self._memory = memory or _MemoryStub()
 
     @property
     def last_episode_id(self) -> str | None:
@@ -390,7 +396,7 @@ class _AgentProxy:
 
     @property
     def memory(self):
-        return _MemoryStub()
+        return self._memory
 
     async def initialize(self) -> None:
         pass
