@@ -413,7 +413,7 @@ class _AgentProxy:
                 goal=user_input[:100],
                 results=[ScoredResult(
                     step=Step(id=0, tool="none", input=user_input, expected_output=""),
-                    result=StepResult(step_id=0, output="Worker unavailable. Please retry."),
+                    result=StepResult(step_id=0, output="Désolé, la requête a pris trop de temps. Réessaie avec une question plus simple."),
                     score=CriticScore(scores={}, final_score=0, retry=False),
                 )],
             )

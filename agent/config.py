@@ -149,7 +149,7 @@ class TelegramConfig(BaseModel):
 
 class DaemonConfig(BaseModel):
     max_concurrent: int = 3
-    request_timeout: int = 300
+    request_timeout: int = 600
 
 
 class LoggingConfig(BaseModel):
