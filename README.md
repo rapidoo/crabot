@@ -5,7 +5,7 @@
 ### Un agent IA autonome, 100% local, forgé en Bretagne.
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
-[![Ollama](https://img.shields.io/badge/Ollama-Gemma_4-000000?logo=ollama&logoColor=white)](https://ollama.com)
+[![Ollama v0.20.2](https://img.shields.io/badge/Ollama-Gemma_4-000000?logo=ollama&logoColor=white)](https://ollama.com)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Tests: 291+](https://img.shields.io/badge/Tests-291+-green.svg)]()
 
@@ -103,9 +103,9 @@ models:
 
 > 🧪 **Testé sur MacBook Pro M4 Pro, 48 Go RAM** — les 3 modèles Gemma 4 tournent simultanément sans broncher.
 
-> ⚠️ **Bug connu : Gemma 4 et le français** — Le tokenizer de Gemma 4 tronque les caractères accentués français (é, è, ê, ç...), produisant des mots incomplets ("compétences" → "comp"). Ce bug est au niveau du modèle, pas du code. **Workaround : utiliser Mistral** avec `make chat MODEL=MISTRAL` ou `MODEL_NAME=MISTRAL` dans `.env`.
+> 🆕 **Support Mistral** — Crabot supporte aussi la famille Mistral (mistral-small3.2 + ministral-3) comme alternative à Gemma 4. Lance avec `make chat MODEL=MISTRAL` ou `MODEL_NAME=MISTRAL` dans `.env`.
 
-> Fonctionne aussi avec n'importe quel modèle Ollama — Llama 3, Mistral, Qwen... Change 4 lignes dans `config.yaml`.
+> Fonctionne aussi avec n'importe quel modèle Ollama — Llama 3, Qwen... Change 4 lignes dans `config.yaml`.
 
 ---
 
