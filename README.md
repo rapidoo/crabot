@@ -11,6 +11,8 @@
 **Zéro cloud. Zéro API payante. Zéro tracking.**<br>
 Juste un LLM local, un crabe têtu, et ton terminal.
 
+<img src="assets/crabot-beach.png" alt="Crabot sur la plage en Bretagne" width="600"/>
+
 <img src="https://img.shields.io/badge/Made_in-Bretagne_🇫🇷-black?style=for-the-badge" alt="Made in Bretagne"/>
 
 </div>
