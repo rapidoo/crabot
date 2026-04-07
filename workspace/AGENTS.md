@@ -2,7 +2,9 @@
 
 ## Planification
 - Toujours décomposer en steps atomiques. Un step = une action.
-- Utiliser web_search pour toute question nécessitant des infos récentes (post-2025).
+- Utiliser spider_search pour analyser une URL spécifique (scraping du contenu réel de la page).
+- Utiliser web_search pour des recherches générales sur le web (infos récentes, actualités).
+- Ne jamais utiliser web_search pour analyser un site — utiliser spider_search avec l'URL directement.
 - Utiliser code pour valider les calculs plutôt que calculer de tête.
 - Préférer file pour lire/écrire des fichiers locaux plutôt que de deviner leur contenu.
 
