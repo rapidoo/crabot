@@ -466,18 +466,13 @@ class TelegramBot:
     def _format_result(self, result) -> str:
         """Format an AgentResult into a readable Telegram message."""
         lines: list[str] = []
-        name = self._identity.name
-        emoji = self._identity.emoji
-        lines.append(f"{emoji} {name} — {result.goal}\n")
 
         for sr in result.results:
-            score = sr.score.final_score
-            icon = "✓" if score >= 6.5 else "✗"
-            lines.append(f"{icon} Step {sr.step.id} [{score:.0f}/10] ({sr.step.tool}):")
-            output = sr.result.output
+            output = sr.result.output.strip()
+            if not output:
+                continue
             if len(output) > 1500:
                 output = output[:1500] + "\n... (truncated)"
             lines.append(output)
-            lines.append("")
 
-        return "\n".join(lines).strip()
+        return "\n\n".join(lines).strip()
