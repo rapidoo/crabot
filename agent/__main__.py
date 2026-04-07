@@ -28,6 +28,8 @@ def main() -> None:
         _run_repl()
     elif sys.argv[1] == "--daemon":
         _run_daemon()
+    elif sys.argv[1] == "--supervisor":
+        _run_supervisor()
     elif sys.argv[1] == "--help" or sys.argv[1] == "-h":
         _print_help()
     else:
@@ -53,7 +55,8 @@ def _print_help() -> None:
     print("Usage:")
     print("  python -m agent                          Interactive (REPL)")
     print("  python -m agent 'prompt'                 One-shot")
-    print("  python -m agent --daemon                 Telegram bot (24/7)")
+    print("  python -m agent --daemon                 Telegram bot (24/7, single process)")
+    print("  python -m agent --supervisor             Supervisor + worker (self-modifying)")
     print("  python -m agent --model mistral           Use Mistral models")
     print("  python -m agent --model gemma4            Use Gemma4 models (default)")
     print()
@@ -69,6 +72,21 @@ def _print_help() -> None:
 def _run_daemon() -> None:
     from agent.daemon import run_daemon
     asyncio.run(run_daemon())
+
+
+def _run_supervisor() -> None:
+    from agent.supervisor import Supervisor
+    from agent.env import load_dotenv as _load_dotenv
+    _load_dotenv()
+    settings = get_settings()
+    logging.basicConfig(
+        level=getattr(logging, settings.logging.level, logging.INFO),
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
+    sup = Supervisor(settings)
+    asyncio.run(sup.start())
 
 
 def _run_oneshot() -> None:

@@ -210,6 +210,15 @@ class EvolutionConfig(BaseModel):
     ]
 
 
+class SupervisorConfig(BaseModel):
+    socket_path: str = "/tmp/nano-agent.sock"
+    health_check_interval: int = 30
+    health_check_timeout: int = 5
+    worker_restart_delay: int = 2
+    max_restart_attempts: int = 5
+    drain_timeout: int = 30
+
+
 class Settings(BaseModel):
     models: ModelsConfig = ModelsConfig()
     sampling: SamplingConfig = SamplingConfig()
@@ -230,6 +239,7 @@ class Settings(BaseModel):
     reflection: ReflectionConfig = ReflectionConfig()
     evolution: EvolutionConfig = EvolutionConfig()
     lessons: LessonConfig = LessonConfig()
+    supervisor: SupervisorConfig = SupervisorConfig()
     approval: ApprovalConfig = ApprovalConfig()
     truncation: TruncationConfig = TruncationConfig()
 
