@@ -3,7 +3,7 @@
 Usage:
     python -m agent                        # Interactive REPL
     python -m agent "your prompt here"     # One-shot mode
-    python -m agent --daemon               # Telegram bot daemon (24/7)
+    python -m agent --daemon               # Telegram bot (supervisor + worker)
 """
 
 from __future__ import annotations
@@ -27,8 +27,6 @@ def main() -> None:
     if len(sys.argv) < 2:
         _run_repl()
     elif sys.argv[1] == "--daemon":
-        _run_daemon()
-    elif sys.argv[1] == "--supervisor":
         _run_supervisor()
     elif sys.argv[1] == "--help" or sys.argv[1] == "-h":
         _print_help()
@@ -55,8 +53,7 @@ def _print_help() -> None:
     print("Usage:")
     print("  python -m agent                          Interactive (REPL)")
     print("  python -m agent 'prompt'                 One-shot")
-    print("  python -m agent --daemon                 Telegram bot (24/7, single process)")
-    print("  python -m agent --supervisor             Supervisor + worker (self-modifying)")
+    print("  python -m agent --daemon                 Telegram bot (supervisor + worker)")
     print("  python -m agent --model mistral           Use Mistral models")
     print("  python -m agent --model gemma4            Use Gemma4 models (default)")
     print()
@@ -67,11 +64,6 @@ def _print_help() -> None:
     print("  /goal <desc> Create a new goal")
     print("  /clean       Clear conversation history")
     print("  /quit        Exit")
-
-
-def _run_daemon() -> None:
-    from agent.daemon import run_daemon
-    asyncio.run(run_daemon())
 
 
 def _run_supervisor() -> None:
