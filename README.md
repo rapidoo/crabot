@@ -2,12 +2,11 @@
 
 # 🦀 Crabot
 
-### Un agent IA autonome, 100% local, forgé en Bretagne.
+### Un agent IA autonome, 100% local, qui apprend et se modifie lui-même.
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
-[![Ollama v0.20.2](https://img.shields.io/badge/Ollama-Gemma_4-000000?logo=ollama&logoColor=white)](https://ollama.com)
+[![Ollama](https://img.shields.io/badge/Ollama-Gemma_4_|_Mistral-000000?logo=ollama&logoColor=white)](https://ollama.com)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Tests: 291+](https://img.shields.io/badge/Tests-291+-green.svg)]()
 
 **Zéro cloud. Zéro API payante. Zéro tracking.**<br>
 Juste un LLM local, un crabe têtu, et ton terminal.
@@ -28,22 +27,8 @@ make chat
 🦀 Crabot — Agent IA local
 Tape ta question ou /help pour les commandes. /quit pour sortir.
 
-🦀 > hi
-
-  Salut. Qu'est-ce qu'on traite ?
-
-🦀 > je ne sais pas encore, que me proposes-tu ?
-
-  Quelques pistes :
-  - Je peux chercher les dernières news tech sur le web
-  - Écrire ou analyser du code Python
-  - Lire et résumer des fichiers locaux
-  - Me créer de nouveaux outils à la volée
-  Dis-moi ce qui t'intéresse, je m'adapte.
-
 🦀 > Recherche les dernières news sur l'IA locale
 
-  ✓ Search results for 'IA locale 2026'
   Voici ce que j'ai trouvé :
   1. Gemma 4 — Google sort ses modèles MoE en open weight...
   2. Ollama 0.8 — Support natif des function calls...
@@ -51,20 +36,14 @@ Tape ta question ou /help pour les commandes. /quit pour sortir.
 
 🦀 > Crée un outil qui convertit des EUR en USD au taux 1.08
 
-  ✓ Tool 'convert_eur_to_usd' created and registered.
-    File: agent/tools/custom/convert_eur_to_usd.py
-    Available immediately — persists across restarts.
+  Tool 'convert_eur_to_usd' created and registered.
+  File: agent/tools/custom/convert_eur_to_usd.py
+  Available immediately — persists across restarts.
 
-🦀 > /tools
-  code            Execute Python code in an isolated subprocess.
-  file            Read or write files on the local filesystem.
-  search          Search local files for matching content.
-  web_search      Search the internet for current information.
-  tool_create     Create a new persistent tool.
-  convert_eur_to_usd  Convert EUR to USD at rate 1.08.  ← tout juste créé
+🦀 > non, utilise plutôt le taux 1.12
 
-🦀 > /quit
-Bye.
+  Lesson learned: Utiliser le taux EUR/USD de 1.12
+  Tool updated.
 ```
 
 > Pas de blabla, pas de "Bien sûr ! 😊". Crabot est direct — c'est un crabe breton, pas un chatbot corporate.
@@ -75,75 +54,137 @@ Bye.
 
 | Problème | Solution Crabot |
 |----------|----------------|
-| Les agents IA dépendent d'APIs cloud payantes | **100% local** — Ollama + Gemma 4, rien ne sort de ta machine |
-| Les chatbots oublient tout entre les sessions | **Mémoire persistante** — Neo4j graph avec épisodes, entités, skills |
-| Les LLM hallucinent sans contrôle | **Critique intégrée** — un modèle dédié note chaque réponse et force un retry si besoin |
-| Les agents sont des boîtes noires | **Personnalité ouverte** — édite 5 fichiers Markdown pour tout changer |
-| Les outils sont figés | **Auto-évolution** — Crabot se crée ses propres outils à la volée |
+| Les agents IA dépendent d'APIs cloud payantes | **100% local** — Ollama + Gemma 4 / Mistral, rien ne sort de ta machine |
+| Les chatbots oublient tout entre les sessions | **Mémoire persistante** — Neo4j graph avec épisodes, entités, skills, lessons |
+| Les LLM hallucinent sans contrôle | **Critique intégrée** — un modèle dédié note chaque réponse et force un retry si < seuil |
+| Les agents sont des boîtes noires | **Personnalité ouverte** — 5 fichiers Markdown définissent tout son comportement |
+| Les outils sont figés | **Auto-évolution** — Crabot crée ses propres outils et modifie son propre code |
+| Les agents ne retiennent pas les corrections | **Apprentissage continu** — chaque correction est extraite, stockée, et réinjectée |
 
 ---
 
-## 🔥 Propulsé par Gemma 4
+## 🔥 Multi-modèles : Gemma 4 + Mistral
 
-Crabot tire parti de la **famille Gemma 4** de Google — les modèles open-weight les plus efficaces pour tourner en local :
+Crabot supporte deux familles de modèles, sélectionnables au lancement :
 
-```yaml
-models:
-  triage:    gemma4           # 4B — triage ultra-rapide (<1s)
-  planner:   gemma4:26b      # 26B MoE — planification intelligente
-  executor:  gemma4:26b      # 26B MoE — exécution des tâches
-  critic:    gemma4:31b      # 31B Dense — critique exigeante
+```bash
+make chat                    # Gemma 4 (défaut)
+make chat MODEL=MISTRAL      # Mistral
 ```
 
-**Pourquoi Gemma 4 ?**
-- **MoE 26B** : performance de gros modèle, consommation de petit — tourne sur un Mac M1 16 Go
-- **Dense 31B** : quand il faut un regard critique sans compromis
-- **4B** : triage en moins d'une seconde, zéro latence perçue
-- **Open weights** : pas de licence restrictive, pas de call home
-
-> 🧪 **Testé sur MacBook Pro M4 Pro, 48 Go RAM** — les 3 modèles Gemma 4 tournent simultanément sans broncher.
-
-> 🆕 **Support Mistral** — Crabot supporte aussi la famille Mistral (mistral-small3.2 + ministral-3) comme alternative à Gemma 4. Lance avec `make chat MODEL=MISTRAL` ou `MODEL_NAME=MISTRAL` dans `.env`.
+```yaml
+# Gemma 4 (défaut)                    # Mistral
+triage:    gemma4           # 4B       triage:    ministral-3:8b
+planner:   gemma4:26b       # 26B MoE  planner:   mistral-small3.2
+executor:  gemma4:26b       # 26B MoE  executor:  mistral-small3.2
+critic:    gemma4:31b       # 31B      critic:    mistral-small3.2
+```
 
 > Fonctionne aussi avec n'importe quel modèle Ollama — Llama 3, Qwen... Change 4 lignes dans `config.yaml`.
+
+> 🧪 **Testé sur MacBook Pro M4 Pro, 48 Go RAM.**
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-User Input (CLI / Telegram / REPL)
+User Input (CLI / Telegram)
     │
     ▼
-Triage (4B, <1s) ──── simple ──► Réponse directe + SOUL.md
-    │ complex
-    ▼
-Memory Read (Neo4j) ── recherche hybride (vector 70% + lexical 30%)
-    │                    embeddings nomic-embed-text + entités
-    │                    skills apprises (cache TTL 5min)
-    ▼
-Planner (26B) ──────── plan JSON + AGENTS.md rules + tools dynamiques
-    │
-    ▼
-Executor (26B) ──────── exécute les steps :
-    │   • code       → subprocess Python sandboxé
-    │   • file       → lecture/écriture fichiers
-    │   • search     → recherche locale
-    │   • web_search → Brave Search API
-    │   • tool_create → crée un nouveau tool persistant
-    │   • parallel via asyncio.gather
-    │   • loop detection (3 détecteurs)
-    ▼
-Critic (31B) ────────── score 0-10, retry si < seuil adaptatif
-    │
-    ▼
-Memory Write (Neo4j) ── épisode + embedding + entités + skills extraites
-    │                    transactions atomiques, compression auto
+┌─ Supervisor ─────────────────────────────────────┐
+│  Gère les interfaces, spawne un worker           │
+│  redémarrable pour le rechargement de code       │
+└──────────┬───────────────────────────────────────┘
+           │ IPC (Unix socket)
+           ▼
+┌─ Execution Worker ───────────────────────────────┐
+│                                                   │
+│  Triage (4B) ──── simple ──► Réponse directe     │
+│      │ complex                                    │
+│      ▼                                            │
+│  Memory Read ── recherche hybride + lessons       │
+│      ▼                                            │
+│  Planner (26B) ── plan JSON + rules + skills      │
+│      ▼                                            │
+│  Executor (26B) ── tools, code, web, parallel     │
+│      ▼                                            │
+│  Critic (31B) ── score 0-10, retry si < seuil     │
+│      ▼                                            │
+│  Memory Write ── épisode + entités + lessons       │
+│      ▼                                            │
+│  Evolution ── workspace, prompts, skills          │
+│                                                   │
+└───────────────────────────────────────────────────┘
 ```
 
-Le pattern **Plan → Execute → Critique** garantit que chaque réponse complexe est vérifiée avant d'être envoyée. Si le Critic n'est pas satisfait, l'Executor recommence — automatiquement.
+Le pattern **Plan → Execute → Critique** garantit que chaque réponse complexe est vérifiée avant d'être envoyée.
 
-> Pour une documentation architecture détaillée (diagrammes, modules, features, patterns), voir [`ARCHITECTURE.md`](ARCHITECTURE.md).
+> Pour la documentation architecture complète, voir [`ARCHITECTURE.md`](ARCHITECTURE.md).
+
+---
+
+## 🧠 Ce qui rend Crabot intelligent
+
+### Apprentissage continu
+
+Crabot apprend de tes corrections. Quand tu le corriges ("non, utilise uv au lieu de pip"), il :
+1. **Détecte** la correction automatiquement
+2. **Extrait** une lesson structurée (règle, contexte, catégorie)
+3. **Stocke** dans Neo4j avec un embedding vectoriel
+4. **Réinjecte** les lessons pertinentes dans le Planner à chaque requête
+
+Les lessons se renforcent quand la même correction revient. Plus une lesson est confirmée, plus elle a de poids.
+
+### Auto-modification du code
+
+En mode daemon, Crabot tourne avec une **architecture supervisor + worker**. Quand il modifie son propre code :
+1. Un **evolution worker** applique les mutations et valide (syntax check, import check, smoke test)
+2. Si tout passe, le supervisor **redémarre le worker** avec le nouveau code
+3. Si ça échoue, **rollback automatique** — le service n'est jamais interrompu
+
+### Personnalité évolutive
+
+Les fichiers `workspace/` ne sont plus statiques. Toutes les 20 interactions, Crabot **synthétise ses lessons** et fait évoluer ses propres fichiers :
+- **USER.md** — profil utilisateur enrichi par les préférences détectées
+- **AGENTS.md** — règles opérationnelles ajustées par les corrections
+- **SOUL.md** — personnalité affinée par le feedback
+
+### Mémoire persistante + recherche hybride
+
+Chaque conversation est stockée comme épisode dans Neo4j. La recherche de contexte est **hybride** : similarité vectorielle (70%) via `nomic-embed-text` + matching lexical sur entités (30%).
+
+### Outils auto-créés
+
+```
+🦀 > Crée un outil qui vérifie si un site web est en ligne
+
+  Tool 'check_website_status' created and registered.
+  Available immediately and persists across restarts.
+```
+
+Les outils sont validés par AST, sandboxés, et auto-découverts au démarrage.
+
+### Boucles de qualité
+
+- **Critic adaptatif** — le seuil de qualité se calibre sur les scores passés
+- **Loop detection** — 3 détecteurs (repeat, circuit breaker, ping-pong)
+- **A/B testing de prompts** — les prompts évoluent et sont promus si meilleurs
+- **Compression mémorielle** — les vieux épisodes à faible score sont purgés
+
+---
+
+## 🦀 Personnalité configurable
+
+Tout est dans `workspace/` :
+
+| Fichier | Ce qu'il contrôle | Évolue automatiquement ? |
+|---------|-------------------|:------------------------:|
+| `SOUL.md` | Ton, opinions, humour, limites | Oui |
+| `AGENTS.md` | Règles opérationnelles | Oui |
+| `USER.md` | Profil utilisateur | Oui |
+| `IDENTITY.md` | Nom, emoji, creature | Non |
+| `HEARTBEAT.md` | Tâches proactives (cron) | Non |
 
 ---
 
@@ -155,17 +196,23 @@ Le pattern **Plan → Execute → Critique** garantit que chaque réponse comple
 - **Ollama** installé et lancé → [ollama.com](https://ollama.com)
 
 ```bash
-# Télécharge les modèles Gemma 4
-ollama pull gemma4          # 4B — minimum pour démarrer (9.6 Go)
-ollama pull gemma4:26b      # 26B MoE — recommandé (18 Go)
-ollama pull gemma4:31b      # 31B Dense — optionnel, pour le Critic (20 Go)
-ollama pull nomic-embed-text # Embeddings — pour la recherche sémantique (274 Mo)
+# Option A : Gemma 4
+ollama pull gemma4          # 4B — minimum pour démarrer
+ollama pull gemma4:26b      # 26B MoE — recommandé
+ollama pull gemma4:31b      # 31B Dense — optionnel, pour le Critic
+
+# Option B : Mistral
+ollama pull mistral-small3.2
+ollama pull ministral-3:8b
+
+# Embeddings (requis pour la mémoire)
+ollama pull nomic-embed-text
 ```
 
 ### Installation
 
 ```bash
-git clone https://github.com/flebris/crabot.git && cd crabot
+git clone https://github.com/rapidoo/crabot.git && cd crabot
 make install
 
 # Configure tes secrets (optionnel)
@@ -176,88 +223,30 @@ cp .env.example .env
 ### 3 modes d'utilisation
 
 ```bash
-# 💬 Mode interactif — le plus fun
+# 💬 Mode interactif
 make chat
 
-# ⚡ Mode one-shot — une question, une réponse
+# ⚡ Mode one-shot
 make run PROMPT="Calcule pi avec 10 décimales"
 
-# 🤖 Mode daemon — bot Telegram 24/7
+# 🤖 Mode daemon — bot Telegram 24/7 (supervisor + worker)
 make daemon
 ```
 
 ---
 
-## 🧠 Ce qui rend Crabot intelligent
-
-### Mémoire persistante + recherche hybride
-
-Crabot se souvient — et comprend le sens, pas juste les mots. Grâce à Neo4j, chaque conversation est stockée sous forme d'épisodes dans un graphe de connaissances. Les entités sont extraites, les skills sont apprises, les patterns réutilisés.
-
-La recherche de contexte est **hybride** : similarité vectorielle (70%) via embeddings `nomic-embed-text` + matching lexical sur entités (30%). Même si tu reformules différemment, Crabot retrouve les épisodes pertinents.
-
-### Auto-évolution
-
-Demande-lui de créer un outil — il le code, le teste, l'enregistre, et l'utilise immédiatement :
-
-```
-🦀 > Crée un outil qui vérifie si un site web est en ligne
-
-  ✓ Tool 'check_website_status' created and registered.
-    File: agent/tools/custom/check_website_status.py
-    Available immediately and persists across restarts.
-```
-
-Les outils custom sont auto-découverts au démarrage et injectés dans le Planner.
-
-### Dreaming + compression mémorielle
-
-Inspiré des neurosciences : Crabot consolide sa mémoire périodiquement en fonction de la fréquence, pertinence, diversité et récence des épisodes. Les souvenirs inutiles s'estompent, les patterns importants se renforcent.
-
-Les vieux épisodes à faible score sont automatiquement purgés (configurable : `compress_after_days`, `compress_min_keep`) pour garder le graphe compact et les requêtes rapides.
-
-### Loop detection
-
-3 détecteurs empêchent l'agent de tourner en boucle :
-- **Repeat** — détecte les réponses identiques
-- **Circuit breaker** — coupe après N échecs consécutifs
-- **Ping-pong** — détecte les allers-retours stériles entre Planner et Executor
-
-### Adaptive threshold
-
-Le seuil de qualité du Critic se calibre automatiquement sur la distribution des scores passés. Plus Crabot s'améliore, plus il est exigeant avec lui-même.
-
----
-
-## 🦀 Personnalité configurable
-
-Crabot a une âme — et tu peux la modifier. Tout est dans `workspace/` :
-
-| Fichier | Ce qu'il contrôle | Injecté dans |
-|---------|-------------------|-------------|
-| `SOUL.md` | Ton, opinions, humour, limites | Executor |
-| `IDENTITY.md` | Nom, emoji, creature, vibe | Telegram |
-| `AGENTS.md` | Règles opérationnelles | Planner |
-| `USER.md` | Profil utilisateur | Executor |
-| `HEARTBEAT.md` | Tâches proactives (cron) | Daemon |
-
-Envie d'un agent sarcastique ? Poétique ? Ultra-formel ? Change `SOUL.md` et relance.
-
----
-
 ## 🤖 Mode Telegram (24/7)
-
-Crabot peut tourner en daemon et répondre sur Telegram en continu :
 
 ```bash
 # En service macOS (auto-start au boot, auto-restart on crash)
 make service-install && make service-start
 ```
 
-- Répond à tes messages via le pipeline complet Plan → Execute → Critique
-- **Heartbeat** toutes les 30 min — tâches proactives définies dans `HEARTBEAT.md`
-- **Goal engine** toutes les 15 min — suit tes objectifs long terme
-- Commandes Telegram : `/good`, `/bad`, `/stats`, `/help`
+- Pipeline complet Plan → Execute → Critique sur chaque message
+- **Heartbeat** toutes les 30 min — tâches proactives
+- **Goal engine** toutes les 15 min — objectifs long terme
+- **Apprentissage** — `/bad "raison"` extrait une lesson automatiquement
+- Commandes : `/good`, `/bad`, `/stats`, `/evolve`, `/clean`, `/help`
 
 ---
 
@@ -267,49 +256,13 @@ Tout dans `agent/config.yaml`. Secrets dans `.env`.
 
 ```env
 # .env — rien n'est obligatoire sauf Ollama
-TELEGRAM_BOT_TOKEN=ton_token_botfather     # optionnel — pour le mode Telegram
-NEO4J_PASSWORD=ton_password_neo4j          # optionnel — pour la mémoire persistante
-BRAVE_API_KEY=ta_cle_brave_search          # optionnel — pour la recherche web
+TELEGRAM_BOT_TOKEN=ton_token_botfather     # optionnel — mode Telegram
+NEO4J_PASSWORD=ton_password_neo4j          # optionnel — mémoire persistante
+BRAVE_API_KEY=ta_cle_brave_search          # optionnel — recherche web
+MODEL_NAME=GEMMA4                          # ou MISTRAL
 ```
 
-> **Le minimum pour démarrer : Ollama + `gemma4`. C'est tout.** Le reste est optionnel et s'active progressivement.
-
----
-
-## 🧪 Tests
-
-291+ tests. On ne rigole pas avec la qualité.
-
-```bash
-make test                 # Unit + intégration (sans Neo4j)
-make test-unit            # Unit seuls — pas besoin d'Ollama
-make test-integration     # Avec Ollama réel
-make test-neo4j           # Mémoire graph
-make test-all             # Tout d'un coup
-make benchmark            # 20 prompts avec métriques
-```
-
----
-
-## 📋 Toutes les commandes
-
-```bash
-make install              # Crée venv + installe tout
-make chat                 # REPL interactif
-make run PROMPT="..."     # One-shot
-make daemon               # Bot Telegram foreground
-make service-install      # Service macOS (LaunchAgent)
-make service-start        # Démarre le service
-make service-stop         # Arrête
-make service-restart      # Redémarre
-make service-status       # Statut + logs
-make service-logs         # Tail -f des logs
-make service-uninstall    # Supprime le service
-make lint                 # mypy strict
-make setup-neo4j          # Neo4j via Docker
-make stop-neo4j           # Arrête Neo4j
-make clean                # Supprime venv, caches, logs
-```
+> **Le minimum pour démarrer : Ollama + un modèle. C'est tout.** Le reste s'active progressivement.
 
 ---
 
@@ -317,102 +270,110 @@ make clean                # Supprime venv, caches, logs
 
 ```
 crabot/
-├── workspace/                 🦀 Personnalité
+├── workspace/                 🦀 Personnalité (évolue automatiquement)
 │   ├── SOUL.md                    Ton, humour, opinions
 │   ├── IDENTITY.md                Nom, emoji, vibe
 │   ├── AGENTS.md                  Règles opérationnelles
 │   ├── USER.md                    Profil utilisateur
 │   └── HEARTBEAT.md               Tâches proactives
 ├── agent/
-│   ├── __main__.py            CLI : REPL, one-shot, daemon
 │   ├── agent.py               Orchestrateur principal
+│   ├── supervisor.py          Supervisor (gère le worker)
+│   ├── worker.py              Worker d'exécution (IPC)
+│   ├── worker_evolution.py    Worker d'évolution (validation code)
+│   ├── ipc.py                 Protocole IPC Unix socket
 │   ├── config.yaml            Configuration modèles
-│   ├── schemas.py             Modèles Pydantic
-│   ├── daemon.py              Telegram + scheduler
-│   ├── personality/
-│   │   └── loader.py          Charge workspace/
 │   ├── core/
 │   │   ├── triage.py          Classification simple/complex
 │   │   ├── planner.py         Plan JSON structuré
 │   │   ├── executor.py        Exécution (parallel, loop detection)
 │   │   ├── critic.py          Scoring + retry adaptatif
-│   │   ├── heartbeat.py       Tâches proactives
-│   │   ├── goal_engine.py     Goals persistants
 │   │   ├── scheduler.py       Cron + self-scheduling
 │   │   └── reflection.py      Réflexion sur métriques
-│   ├── models/
-│   │   ├── ollama_client.py   Client async Ollama
-│   │   └── router.py          Sélection modèle/rôle
+│   ├── memory/
+│   │   ├── neo4j_client.py    Graphe (épisodes, entités, skills, lessons)
+│   │   ├── embedder.py        Embeddings nomic-embed-text
+│   │   ├── entity_extractor.py Extraction entités via LLM
+│   │   └── lesson_extractor.py Extraction lessons (corrections user)
+│   ├── intelligence/
+│   │   ├── workspace_evolver.py  Évolution workspace depuis lessons
+│   │   ├── lesson_injector.py    Injection lessons dans Planner
+│   │   ├── skill_injector.py     Injection skills apprises
+│   │   ├── prompt_manager.py     A/B testing de prompts
+│   │   ├── action_applier.py     Self-modification (code, config)
+│   │   └── loop_detection.py     3 détecteurs de boucles
 │   ├── tools/
 │   │   ├── registry.py        Auto-discovery
 │   │   ├── code_exec.py       Sandbox Python
-│   │   ├── file_io.py         Fichiers (chemin restreint)
-│   │   ├── search.py          Recherche locale
 │   │   ├── web_search.py      Brave Search API
 │   │   ├── tool_create.py     Meta-tool : auto-création
 │   │   └── custom/            🔧 Outils générés par l'agent
-│   ├── intelligence/
-│   │   ├── loop_detection.py  3 détecteurs de boucles
-│   │   ├── dreaming.py        Consolidation mémorielle
-│   │   └── skill_injector.py  Injection skills
-│   ├── memory/
-│   │   ├── neo4j_client.py    Graphe (épisodes, entités, skills, vecteurs)
-│   │   ├── embedder.py        Embeddings via ollama SDK (nomic-embed-text)
-│   │   ├── entity_extractor.py Extraction entités via LLM
-│   │   └── schemas.cypher     Setup Neo4j + index vectoriel
-│   └── infra/
-│       ├── state.py           Crash recovery
-│       ├── retry.py           Backoff exponentiel
-│       └── metrics.py         Métriques JSONL
-├── tests/                     291+ tests
-└── benchmarks/                Suite benchmark (20 prompts)
+│   └── interfaces/
+│       └── telegram_bot.py    Bot Telegram
+├── tests/
+└── benchmarks/
 ```
 
 ---
 
 ## 🗺️ Roadmap
 
-### 🔐 Sécurité & authentification
-- [ ] **Auth Telegram renforcée** — whitelist par username en plus des user IDs, confirmation à la première connexion
-- [ ] **Rate limiting** — limite de requêtes par utilisateur (anti-flood / anti-abus)
-- [ ] **Sandboxing renforcé** — isolation des outils custom (seccomp / nsjail pour `code_exec`)
-- [ ] **Audit log** — journal immuable de toutes les actions agent (qui, quand, quoi)
-- [ ] **Chiffrement mémoire** — chiffrement at-rest des épisodes Neo4j (données personnelles)
+### Fait
+- [x] Recherche hybride par embeddings (vector 70% + lexical 30%)
+- [x] Conversation multi-tours (contexte glissant, 20 derniers échanges)
+- [x] Compression mémorielle automatique
+- [x] Apprentissage par lessons (corrections user persistées)
+- [x] Architecture supervisor + worker (self-modification avec reload)
+- [x] Évolution autonome du workspace (USER.md, AGENTS.md, SOUL.md)
+- [x] Support multi-modèles (Gemma 4 + Mistral)
+- [x] A/B testing de prompts avec promotion automatique
 
-### 👥 Multi-utilisateurs
-- [ ] **Contextes isolés** — chaque utilisateur a sa propre mémoire, ses goals, ses outils custom
-- [ ] **Profils utilisateur dynamiques** — `USER.md` par utilisateur, appris au fil des conversations
-- [ ] **Rôles & permissions** — admin / utilisateur / lecture seule
-- [ ] **Quotas** — limites de tokens / requêtes par utilisateur et par jour
+### En cours
+- [ ] RAG sur documents locaux (PDF, Markdown, code source)
+- [ ] Interface web locale (dashboard, métriques, configuration)
+- [ ] Planning long terme (sous-goals avec suivi automatique)
 
-### 🧠 Intelligence
-- [x] **Recherche hybride par embeddings** — vector similarity (70%) + lexical (30%) via `nomic-embed-text` + Neo4j vector index
-- [x] **Compression mémorielle** — purge automatique des vieux épisodes bas-score
-- [ ] **RAG sur documents locaux** — ingestion PDF, Markdown, code source avec chunking
-- [x] **Conversation multi-tours** — contexte glissant sur les 20 derniers échanges + `/clean`
-- [ ] **Planning long terme** — décomposition de projets en sous-goals avec suivi automatique
-- [ ] **Self-evaluation benchmarks** — l'agent s'auto-évalue sur une suite de tests et ajuste ses prompts
-- [ ] **Fine-tuning local** — adaptation du modèle sur les épisodes à score élevé (LoRA)
+### Prévu
+- [ ] Docker Compose (Ollama + Neo4j + Crabot)
+- [ ] Multi-utilisateurs (contextes isolés, rôles, quotas)
+- [ ] API REST + MCP server
+- [ ] Fine-tuning local (LoRA sur épisodes à score élevé)
 
-### 🔌 Intégrations & interfaces
-- [ ] **Interface web locale** — dashboard avec historique, métriques, configuration en live
-- [ ] **API REST** — endpoint HTTP pour intégrer Crabot dans d'autres outils
-- [ ] **Discord / Slack** — interfaces alternatives à Telegram
-- [ ] **Webhooks** — notifications push sur événements (goal atteint, erreur critique, etc.)
-- [ ] **MCP server** — exposer Crabot comme serveur Model Context Protocol
+---
 
-### 📦 Distribution
-- [ ] **Docker Compose** — one-liner avec Ollama + Neo4j + Crabot
-- [ ] **Homebrew tap** — `brew install crabot`
-- [ ] **Plugins communautaires** — marketplace de `agent/tools/custom/` partagés
-- [ ] **Config wizard** — assistant interactif de première installation
-- [ ] **Documentation multilingue** — README en anglais, docs en FR/EN
+## 🧪 Tests
+
+```bash
+make test                 # Unit + intégration
+make test-unit            # Unit seuls — pas besoin d'Ollama
+make test-integration     # Avec Ollama réel
+make test-neo4j           # Mémoire graph
+make benchmark            # 20 prompts avec métriques
+```
+
+---
+
+## 📋 Commandes
+
+```bash
+make install              # Crée venv + installe tout
+make chat                 # REPL interactif
+make run PROMPT="..."     # One-shot
+make daemon               # Bot Telegram (supervisor + worker)
+make service-install      # Service macOS (LaunchAgent)
+make service-start        # Démarre le service
+make service-stop         # Arrête
+make service-restart      # Redémarre
+make service-logs         # Tail -f des logs
+make setup-neo4j          # Neo4j via Docker
+make clean                # Supprime venv, caches, logs
+```
 
 ---
 
 ## 🤝 Contribuer
 
-Les contributions sont les bienvenues ! Crabot est un projet open source né en Bretagne, mais ouvert au monde.
+Les contributions sont les bienvenues ! Projet open source, né en Bretagne, ouvert au monde.
 
 1. Fork le repo
 2. Crée une branche (`git checkout -b feature/mon-truc`)
@@ -424,9 +385,7 @@ Les contributions sont les bienvenues ! Crabot est un projet open source né en 
 
 ## 📜 Licence
 
-Apache 2.0 — libre d'utilisation, modification et distribution. Protection brevets incluse pour les contributeurs.
-
-Voir le fichier [LICENSE](LICENSE) pour les détails.
+Apache 2.0 — libre d'utilisation, modification et distribution.
 
 ---
 
@@ -434,7 +393,7 @@ Voir le fichier [LICENSE](LICENSE) pour les détails.
 
 **Crafté avec obstination en Bretagne 🦀🌊**<br>
 <sub>Par <a href="https://github.com/flebris">Frédéric Le Bris</a> — Le Bris Consulting</sub><br>
-<sub>Propulsé par <a href="https://ollama.com">Ollama</a> et <a href="https://ai.google.dev/gemma">Gemma 4</a></sub>
+<sub>Propulsé par <a href="https://ollama.com">Ollama</a>, <a href="https://ai.google.dev/gemma">Gemma 4</a> et <a href="https://mistral.ai">Mistral</a></sub>
 
 *Aucun crabe n'a été maltraité pendant le développement de ce projet.*
 
