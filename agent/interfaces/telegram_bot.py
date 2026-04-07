@@ -89,6 +89,8 @@ class TelegramBot:
 
         # Track last progress edit time per job (for throttling)
         self._last_edit: dict[str, float] = {}
+        # Heartbeat tasks per job (periodic "still working" updates)
+        self._heartbeat_tasks: dict[str, asyncio.Task] = {}
 
         # Conversation history per chat_id (last N turns)
         self._chat_history: dict[int, list[dict[str, str]]] = {}
@@ -414,9 +416,20 @@ class TelegramBot:
     # -- Job callbacks ---------------------------------------------------------
 
     async def _on_job_progress(self, job: Job) -> None:
-        """Edit the ack message with progress (throttled)."""
+        """Edit the ack message with progress (throttled).
+
+        Also starts a heartbeat task that sends periodic "still working"
+        updates even when the agent emits no progress events (e.g. during
+        a long tool execution).
+        """
         if not self._app or not job.message_id:
             return
+
+        # Start heartbeat for this job if not already running
+        if job.id not in self._heartbeat_tasks:
+            self._heartbeat_tasks[job.id] = asyncio.create_task(
+                self._job_heartbeat(job)
+            )
 
         # Throttle edits to avoid Telegram rate limits
         now = time.monotonic()
@@ -439,22 +452,68 @@ class TelegramBot:
         except Exception:
             pass  # Edit can fail if message is identical or too old
 
+    async def _job_heartbeat(self, job: Job) -> None:
+        """Send periodic heartbeat edits so the user knows the job is alive.
+
+        Runs every 30s. If no progress event updated the message recently,
+        edits it with an elapsed-time indicator.
+        """
+        start = time.monotonic()
+        try:
+            while job.status in (JobStatus.pending, JobStatus.running):
+                await asyncio.sleep(30)
+                if job.status not in (JobStatus.pending, JobStatus.running):
+                    break
+                # Skip if a real progress edit happened recently
+                last = self._last_edit.get(job.id, 0)
+                if time.monotonic() - last < 25:
+                    continue
+                elapsed = int(time.monotonic() - start)
+                mins, secs = divmod(elapsed, 60)
+                phase = _PHASE_LABELS.get(job.current_phase, job.current_phase)
+                text = f"Toujours en cours... {phase} ({mins}m{secs:02d}s)"
+                if job.progress:
+                    text += f"\n{job.progress}"
+                self._last_edit[job.id] = time.monotonic()
+                try:
+                    await self._app.bot.edit_message_text(
+                        chat_id=job.chat_id,
+                        message_id=job.message_id,
+                        text=text,
+                    )
+                except Exception:
+                    pass
+        except asyncio.CancelledError:
+            pass
+
     async def _on_job_complete(self, job: Job) -> None:
         """Send final result as a new message (triggers notification)."""
         if not self._app:
             return
 
+        # Cancel heartbeat
+        ht = self._heartbeat_tasks.pop(job.id, None)
+        if ht and not ht.done():
+            ht.cancel()
+
         # Clean up throttle tracking
         self._last_edit.pop(job.id, None)
 
         if job.status == JobStatus.done and job.result:
+            # Detect timeout results (score=0 from _AgentProxy fallback)
+            is_timeout = (
+                len(job.result.results) == 1
+                and job.result.results[0].score.final_score == 0
+            )
+
             # Edit ack to show completion
             if job.message_id:
+                label = "Timeout — résultat partiel" if is_timeout else "Terminé"
                 try:
                     await self._app.bot.edit_message_text(
                         chat_id=job.chat_id,
                         message_id=job.message_id,
-                        text="Terminé",
+                        text=label,
                     )
                 except Exception:
                     pass
