@@ -192,10 +192,15 @@ class ActionApplier:
     async def _apply_modify_source(
         self, action: dict[str, Any], reflection_id: str | None
     ) -> Mutation | None:
-        """Modify a source file directly. The agent writes, the trainer reviews via git."""
+        """Patch a source file (append/prepend/insert_after). Full replacement is blocked."""
         target_path = action.get("target", "")
-        new_content = action.get("new_value", action.get("content", ""))
-        if not target_path or not new_content:
+        content = action.get("new_value", action.get("content", ""))
+        if not target_path or not content:
+            return None
+
+        patch_mode = action.get("patch_mode", "append")
+        if patch_mode not in ("append", "prepend", "insert_after"):
+            logger.warning("modify_source blocked: invalid patch_mode '%s'", patch_mode)
             return None
 
         # Resolve path relative to repo root
@@ -214,27 +219,46 @@ class ActionApplier:
                 logger.warning("modify_source blocked: protected file: %s", target_path)
                 return None
 
-        # Read previous content for rollback
-        prev_content = None
-        if full_path.exists():
-            prev_content = full_path.read_text(encoding="utf-8")
-            # Skip if content is identical
-            if prev_content.strip() == new_content.strip():
-                logger.info("modify_source skipped: no change for %s", target_path)
-                return None
-            # Create .bak version
-            bak_path = full_path.with_suffix(full_path.suffix + ".bak")
-            shutil.copy2(full_path, bak_path)
+        # File must already exist for patching
+        if not full_path.exists():
+            logger.warning("modify_source blocked: file does not exist: %s", target_path)
+            return None
 
-        # Write new content
-        full_path.parent.mkdir(parents=True, exist_ok=True)
-        full_path.write_text(new_content, encoding="utf-8")
-        logger.info("Source modified: %s", target_path)
+        prev_content = full_path.read_text(encoding="utf-8")
+
+        # Deduplicate: skip if content already present
+        if content.strip() in prev_content:
+            logger.info("modify_source skipped: content already present in %s", target_path)
+            return None
+
+        # Apply patch
+        if patch_mode == "append":
+            patched = prev_content.rstrip() + "\n\n" + content.strip() + "\n"
+        elif patch_mode == "prepend":
+            patched = content.strip() + "\n\n" + prev_content.lstrip()
+        elif patch_mode == "insert_after":
+            marker = action.get("marker", "")
+            if not marker or marker not in prev_content:
+                logger.warning("modify_source blocked: marker not found in %s: '%s'",
+                               target_path, marker[:80])
+                return None
+            patched = prev_content.replace(marker, marker + "\n" + content.strip(), 1)
+
+        # Safety: patch must not shrink the file significantly (catch accidental truncation)
+        if len(patched) < len(prev_content) * 0.8:
+            logger.warning("modify_source blocked: patch would shrink %s by >20%%", target_path)
+            return None
+
+        # Create .bak version and write
+        bak_path = full_path.with_suffix(full_path.suffix + ".bak")
+        shutil.copy2(full_path, bak_path)
+        full_path.write_text(patched, encoding="utf-8")
+        logger.info("Source patched (%s): %s", patch_mode, target_path)
 
         return self._make_mutation(
             "modify_source", target_path,
-            hashlib.sha256((prev_content or "").encode()).hexdigest()[:12],
-            hashlib.sha256(new_content.encode()).hexdigest()[:12],
+            hashlib.sha256(prev_content.encode()).hexdigest()[:12],
+            hashlib.sha256(patched.encode()).hexdigest()[:12],
             action.get("reason", ""), reflection_id,
         )
 

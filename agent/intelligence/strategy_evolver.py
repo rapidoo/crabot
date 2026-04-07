@@ -96,9 +96,8 @@ def analyze_critic(traces: list[dict[str, Any]]) -> list[dict[str, Any]]:
         current_prompt = prompt_path.read_text(encoding="utf-8")
 
     if avg > CRITIC_HIGH_BIAS and current_prompt:
-        # Append stricter instructions to the prompt
         stricter_addition = (
-            "\n\nCalibration note: Be stricter in scoring. "
+            "Calibration note: Be stricter in scoring. "
             "A score of 8+ should only be given for truly excellent results. "
             "Default to 6.0 for adequate-but-unremarkable answers. "
             "Deduct points for: vague answers, missing details, incorrect assumptions."
@@ -107,12 +106,13 @@ def analyze_critic(traces: list[dict[str, Any]]) -> list[dict[str, Any]]:
             actions.append({
                 "type": "modify_source",
                 "target": "agent/prompts/critic.md",
-                "new_value": current_prompt.rstrip() + stricter_addition + "\n",
+                "patch_mode": "append",
+                "new_value": stricter_addition,
                 "reason": f"Critic bias detected: avg {avg:.1f} > {CRITIC_HIGH_BIAS} — adding stricter calibration",
             })
     elif avg < CRITIC_LOW_BIAS and current_prompt:
         relaxed_addition = (
-            "\n\nCalibration note: Be more generous in scoring. "
+            "Calibration note: Be more generous in scoring. "
             "A score of 5.0 should be reserved for genuinely poor results. "
             "Give credit for partial correctness and reasonable attempts."
         )
@@ -120,7 +120,8 @@ def analyze_critic(traces: list[dict[str, Any]]) -> list[dict[str, Any]]:
             actions.append({
                 "type": "modify_source",
                 "target": "agent/prompts/critic.md",
-                "new_value": current_prompt.rstrip() + relaxed_addition + "\n",
+                "patch_mode": "append",
+                "new_value": relaxed_addition,
                 "reason": f"Critic bias detected: avg {avg:.1f} < {CRITIC_LOW_BIAS} — relaxing calibration",
             })
 

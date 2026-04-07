@@ -34,7 +34,7 @@ Based on this data, respond with JSON ONLY:
     {{"type": "escalate_model", "task_type": "...", "from": "e4b", "to": "26b"}},
     {{"type": "create_skill", "name": "...", "tool_chain": ["search", "code"]}},
     {{"type": "disable_tool", "tool": "...", "reason": "..."}},
-    {{"type": "modify_source", "target": "agent/prompts/critic.md", "new_value": "...", "reason": "..."}}
+    {{"type": "modify_source", "target": "agent/prompts/critic.md", "patch_mode": "append", "new_value": "Additional instruction to add.", "reason": "..."}}
   ]
 }}
 
