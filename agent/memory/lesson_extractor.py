@@ -19,9 +19,12 @@ Correction signals: disagreement ("non", "pas comme ça", "c'est faux"), \
 instruction ("rappelle-toi", "la prochaine fois", "toujours", "jamais", "il faut"), \
 preference ("je préfère", "utilise plutôt", "ne fais plus").
 
-If a correction or lesson is present, return:
-{"detected": true, "rule": "imperative action rule", "context": "when this applies", \
-"category": "preference|correction|fact|process", "source_quote": "relevant user quote"}
+If a correction or lesson is present, return JSON with these fields:
+- "detected": true
+- "rule": the actual actionable rule to follow in the future (e.g. "Always use uv instead of pip for Python dependencies", "Never show thinking tokens in responses"). This MUST be a specific, concrete instruction — NOT a generic label.
+- "context": when this rule applies (e.g. "when installing Python packages", "when formatting Telegram responses")
+- "category": one of "preference", "correction", "fact", "process"
+- "source_quote": the relevant verbatim quote from the user
 
 If no correction or lesson is detected, return:
 {"detected": false}
@@ -31,8 +34,11 @@ JSON ONLY. No prose."""
 FEEDBACK_SYSTEM_PROMPT = """\
 The user gave negative feedback on an AI response. Extract the lesson.
 
-Return: {"rule": "imperative action rule", "context": "when this applies", \
-"category": "preference|correction|fact|process", "source_quote": "user feedback verbatim"}
+Return JSON with these fields:
+- "rule": the actual actionable rule to follow in the future (e.g. "Split long messages into chunks instead of truncating", "Use web_search tool to verify facts before answering"). This MUST be a specific, concrete instruction — NOT a generic label.
+- "context": when this rule applies
+- "category": one of "preference", "correction", "fact", "process"
+- "source_quote": the relevant verbatim quote from the user
 
 JSON ONLY. No prose."""
 
@@ -156,10 +162,22 @@ class LessonExtractor:
         logger.debug("Could not parse lesson JSON from: %s", text[:200])
         return None
 
+    _PLACEHOLDER_RULES = {
+        "imperative action rule",
+        "preference rule",
+        "preference rule (customization)",
+        "action rule",
+        "rule",
+    }
+
     def _validate_lesson(self, data: dict) -> dict | None:
         """Validate and normalize a lesson dict."""
         rule = str(data.get("rule", "")).strip()
         if not rule:
+            return None
+        # Reject generic placeholder rules the LLM copied from examples
+        if rule.lower() in self._PLACEHOLDER_RULES:
+            logger.warning("Rejected placeholder rule: %r", rule)
             return None
         return {
             "rule": rule,

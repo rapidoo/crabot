@@ -116,6 +116,8 @@ class TelegramBot:
         self._app.add_handler(CommandHandler("jobs", self._handle_status))
         self._app.add_handler(CommandHandler("cancel", self._handle_cancel))
         self._app.add_handler(CommandHandler("clean", self._handle_clean))
+        self._app.add_handler(CommandHandler("goal", self._handle_goal))
+        self._app.add_handler(CommandHandler("goals", self._handle_goals))
         self._app.add_handler(CommandHandler("evolve", self._handle_evolve))
         self._app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
@@ -176,6 +178,8 @@ class TelegramBot:
             "/clean — clear conversation history\n"
             "/good — validate the last result\n"
             "/bad [reason] — reject the last result\n"
+            "/goal <desc> — create a persistent goal\n"
+            "/goals — list active goals\n"
             "/stats — show performance metrics\n"
             "/evolve — evolve workspace from lessons\n\n"
             "Examples:\n"
@@ -296,6 +300,43 @@ class TelegramBot:
             f"Conversation history cleared ({count} messages removed)."
         )
         logger.info("Chat history cleared for chat %d (%d messages)", chat_id, count)
+
+    async def _handle_goal(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Create a persistent goal.  Usage: /goal <description>"""
+        if not self._is_allowed(update.effective_user.id):
+            return
+        text = update.message.text.partition(" ")[2].strip()
+        if not text:
+            await update.message.reply_text("Usage: /goal <description>")
+            return
+        if not self._agent.memory.available:
+            await update.message.reply_text("Memory (Neo4j) not connected.")
+            return
+        import hashlib
+        goal_id = hashlib.md5(text.encode()).hexdigest()[:8]
+        await self._agent.memory.persist_goal(goal_id, text)
+        await update.message.reply_text(f"Goal created: {text}")
+        logger.info("Goal created via Telegram: %s (%s)", goal_id, text[:60])
+
+    async def _handle_goals(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """List active goals."""
+        if not self._is_allowed(update.effective_user.id):
+            return
+        if not self._agent.memory.available:
+            await update.message.reply_text("Memory (Neo4j) not connected.")
+            return
+        goals = await self._agent.memory.get_active_goals()
+        if not goals:
+            await update.message.reply_text("No active goals.")
+            return
+        lines = ["Active goals:"]
+        for g in goals:
+            lines.append(f"  • [{g['priority']}] {g['description']}")
+        await update.message.reply_text("\n".join(lines))
 
     async def _handle_good(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE

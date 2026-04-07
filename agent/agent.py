@@ -290,12 +290,15 @@ class Agent:
         agent_result = AgentResult(goal=plan.goal, results=scored)
         self._write_trace(user_input, agent_result, elapsed, phase_timings=phase_timings)
 
-        # Phase 4: Memory write — persist episode + extract skills + extract lessons
+        # Phase 4: Memory write — persist episode + extract skills + extract lessons + goals
         if self._memory.available:
             await self._persist_memory(user_input, agent_result)
             await self._extract_skills(plan, scored)
             if self._settings.lessons.enabled:
                 await self._extract_lessons(user_input)
+            # Auto-create goal from complex user requests
+            from agent.core.goal_engine import create_goal_from_input
+            await create_goal_from_input(self, user_input)
 
         # Phase 5: Evolution — track prompt scores + periodic strategy analysis
         self._episode_count += 1
@@ -417,7 +420,14 @@ class Agent:
         tool_chain = [s.step.tool for s in scored if s.step.tool != "none"]
         if len(tool_chain) < 2:
             return
-        skill_name = f"{plan.goal[:50]}_{hash(tuple(tool_chain)) % 10000}"
+        # Build a readable name from unique tools in order
+        seen: set[str] = set()
+        unique_tools: list[str] = []
+        for t in tool_chain:
+            if t not in seen:
+                seen.add(t)
+                unique_tools.append(t)
+        skill_name = "_".join(unique_tools)
         try:
             await self._memory.persist_skill(skill_name, tool_chain, avg)
             logger.info("Skill extracted: %s (chain=%s, score=%.1f)",
