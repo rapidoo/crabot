@@ -269,22 +269,35 @@ def _print_result(result, compact: bool = False) -> None:
     """Print an AgentResult to the terminal."""
     if compact:
         print()
+        multi_step = len(result.results) > 1
         for sr in result.results:
-            score = sr.score.final_score
-            icon = "✓" if score >= 6.5 else "✗"
-            if len(result.results) > 1:
-                print(f"  {icon} Step {sr.step.id} [{score:.0f}/10]:")
-            print(f"  {sr.result.output}")
+            # Skip empty or error-only steps in multi-step results
+            output = sr.result.output.strip()
+            if not output:
+                continue
+            if multi_step:
+                score = sr.score.final_score
+                icon = "✓" if score >= 6.5 else "✗"
+                print(f"  {icon} [{score:.0f}/10] {output}")
+            else:
+                print(f"  {output}")
             print()
     else:
-        print("\n" + "=" * 60)
-        print(f"Goal: {result.goal}")
-        print("=" * 60)
+        print()
+        multi_step = len(result.results) > 1
         for sr in result.results:
-            score_str = f"[{sr.score.final_score:.1f}/10]"
-            print(f"\nStep {sr.step.id} {score_str} ({sr.step.tool}):")
-            print(sr.result.output)
-        print("=" * 60)
+            output = sr.result.output.strip()
+            if not output:
+                continue
+            if multi_step:
+                score_str = f"[{sr.score.final_score:.1f}/10]"
+                tool = sr.step.tool
+                header = f"Step {sr.step.id} {score_str}"
+                if tool and tool != "none":
+                    header += f" ({tool})"
+                print(f"\n{header}:")
+            print(output)
+        print()
 
 
 if __name__ == "__main__":
