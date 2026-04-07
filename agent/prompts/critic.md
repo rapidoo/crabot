@@ -7,6 +7,10 @@ Criteria (score 0-10 each):
   - format       : does the output match the requested format?
   - coherence    : consistent with previous steps context?
 
+Additional checks:
+  - Validate that all requested sections (e.g., SWOT, positioning) are present.
+  - Ensure the output does not end abruptly or mid-sentence.
+
 Output format (strict):
 {
   "scores": {
