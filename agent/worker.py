@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class _WorkerScheduler(AgentScheduler):
-    """Scheduler with heartbeat/goal dispatch (same as daemon's)."""
+    """Scheduler with heartbeat/goal/reflection/evolution dispatch."""
 
     async def _dispatch_loop(self) -> None:
         while self._running:
@@ -37,11 +37,46 @@ class _WorkerScheduler(AgentScheduler):
                     await run_heartbeat(self._agent)
                 elif event.prompt == "__goal_cycle__":
                     await run_goal_cycle(self._agent)
+                elif event.prompt == "__reflection__":
+                    await self._run_reflection()
+                elif event.prompt == "__workspace_evolve__":
+                    await self._run_workspace_evolution()
                 else:
                     logger.info("Scheduler: dispatching '%s'", event.source)
                     await self._agent.run(event.prompt)
             except Exception as exc:
                 logger.error("Scheduler dispatch failed: %s", exc)
+
+    async def _run_reflection(self) -> None:
+        """Run reflection cycle — analyze performance, apply improvements."""
+        settings = self._agent._settings
+        if not settings.reflection.enabled:
+            return
+        try:
+            from agent.core.reflection import reflect
+            from agent.infra.metrics import MetricsCollector
+            mc = MetricsCollector(settings.logging.trace_file)
+            await reflect(
+                agent=self._agent,
+                metrics=mc,
+                memory=self._agent._memory if self._agent._memory.available else None,
+                action_applier=self._agent._action_applier,
+                last_n=settings.reflection.last_n_episodes,
+            )
+            logger.info("Reflection cycle completed")
+        except Exception as exc:
+            logger.warning("Reflection cycle failed: %s", exc)
+
+    async def _run_workspace_evolution(self) -> None:
+        """Synthesize lessons into workspace files."""
+        try:
+            modified = await self._agent._evolve_workspace()
+            if modified:
+                logger.info("Workspace evolution completed: %s", modified)
+            else:
+                logger.info("Workspace evolution: no changes")
+        except Exception as exc:
+            logger.warning("Workspace evolution failed: %s", exc)
 
 
 class ExecutionWorker:
@@ -68,6 +103,16 @@ class ExecutionWorker:
         self._scheduler.add_task(ScheduledTask(
             name="goal_cycle", prompt="__goal_cycle__",
             schedule_type="interval", schedule_value="900",
+        ))
+        # Reflection — every hour (3600s)
+        self._scheduler.add_task(ScheduledTask(
+            name="reflection", prompt="__reflection__",
+            schedule_type="interval", schedule_value="3600",
+        ))
+        # Workspace evolution — every hour, offset by 30min (starts at 1800+3600=5400)
+        self._scheduler.add_task(ScheduledTask(
+            name="workspace_evolve", prompt="__workspace_evolve__",
+            schedule_type="interval", schedule_value="3600",
         ))
         for task_cfg in self._settings.scheduler.cron_tasks:
             self._scheduler.add_task(ScheduledTask(

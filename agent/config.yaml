@@ -65,7 +65,7 @@ telegram:
 
 daemon:
   max_concurrent: 3            # Max requêtes agent simultanées
-  request_timeout: 300         # Timeout par requête (5 min)
+  request_timeout: 600         # Timeout par requête (10 min)
 
 logging:
   level: INFO
@@ -92,7 +92,7 @@ adaptive:
   threshold_method: mean_minus_std
 
 reflection:
-  enabled: false
+  enabled: true
   last_n_episodes: 50
   auto_apply: true
 

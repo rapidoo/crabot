@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class _HeartbeatScheduler(AgentScheduler):
-    """Scheduler that intercepts special prompts for heartbeat/goals."""
+    """Scheduler that intercepts special prompts for heartbeat/goals/reflection."""
 
     async def _dispatch_loop(self) -> None:
         while self._running:
@@ -31,11 +31,42 @@ class _HeartbeatScheduler(AgentScheduler):
                     await run_heartbeat(self._agent)
                 elif event.prompt == "__goal_cycle__":
                     await run_goal_cycle(self._agent)
+                elif event.prompt == "__reflection__":
+                    await self._run_reflection()
+                elif event.prompt == "__workspace_evolve__":
+                    await self._run_workspace_evolution()
                 else:
                     logger.info("Scheduler: dispatching event from '%s'", event.source)
                     await self._agent.run(event.prompt)
             except Exception as exc:
                 logger.error("Scheduler: event processing failed: %s", exc)
+
+    async def _run_reflection(self) -> None:
+        settings = self._agent._settings
+        if not settings.reflection.enabled:
+            return
+        try:
+            from agent.core.reflection import reflect
+            from agent.infra.metrics import MetricsCollector
+            mc = MetricsCollector(settings.logging.trace_file)
+            await reflect(
+                agent=self._agent,
+                metrics=mc,
+                memory=self._agent._memory if self._agent._memory.available else None,
+                action_applier=self._agent._action_applier,
+                last_n=settings.reflection.last_n_episodes,
+            )
+            logger.info("Reflection cycle completed")
+        except Exception as exc:
+            logger.warning("Reflection cycle failed: %s", exc)
+
+    async def _run_workspace_evolution(self) -> None:
+        try:
+            modified = await self._agent._evolve_workspace()
+            if modified:
+                logger.info("Workspace evolution completed: %s", modified)
+        except Exception as exc:
+            logger.warning("Workspace evolution failed: %s", exc)
 
 
 async def run_daemon(settings: Settings | None = None) -> None:
@@ -80,6 +111,22 @@ async def run_daemon(settings: Settings | None = None) -> None:
         schedule_value="900",
     ))
 
+    # Reflection — every hour
+    scheduler.add_task(ScheduledTask(
+        name="reflection",
+        prompt="__reflection__",
+        schedule_type="interval",
+        schedule_value="3600",
+    ))
+
+    # Workspace evolution — every hour
+    scheduler.add_task(ScheduledTask(
+        name="workspace_evolve",
+        prompt="__workspace_evolve__",
+        schedule_type="interval",
+        schedule_value="3600",
+    ))
+
     # User-defined cron tasks from config
     for task_cfg in settings.scheduler.cron_tasks:
         scheduler.add_task(ScheduledTask(
@@ -90,7 +137,7 @@ async def run_daemon(settings: Settings | None = None) -> None:
         ))
 
     await scheduler.start()
-    logger.info("Scheduler started: heartbeat (30m), goals (15m), %d user tasks",
+    logger.info("Scheduler started: heartbeat (30m), goals (15m), reflection (1h), workspace (1h), %d user tasks",
                 len(settings.scheduler.cron_tasks))
 
     try:
