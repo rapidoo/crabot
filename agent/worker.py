@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 class _WorkerScheduler(AgentScheduler):
     """Scheduler with heartbeat/goal/reflection/evolution dispatch."""
 
+    def __init__(self, agent, lock: asyncio.Lock | None = None):
+        super().__init__(agent)
+        self._lock = lock or asyncio.Lock()
+
     async def _dispatch_loop(self) -> None:
         while self._running:
             try:
@@ -33,17 +37,18 @@ class _WorkerScheduler(AgentScheduler):
             except asyncio.TimeoutError:
                 continue
             try:
-                if event.prompt == "__heartbeat__":
-                    await run_heartbeat(self._agent)
-                elif event.prompt == "__goal_cycle__":
-                    await run_goal_cycle(self._agent)
-                elif event.prompt == "__reflection__":
-                    await self._run_reflection()
-                elif event.prompt == "__workspace_evolve__":
-                    await self._run_workspace_evolution()
-                else:
-                    logger.info("Scheduler: dispatching '%s'", event.source)
-                    await self._agent.run(event.prompt)
+                async with self._lock:
+                    if event.prompt == "__heartbeat__":
+                        await run_heartbeat(self._agent)
+                    elif event.prompt == "__goal_cycle__":
+                        await run_goal_cycle(self._agent)
+                    elif event.prompt == "__reflection__":
+                        await self._run_reflection()
+                    elif event.prompt == "__workspace_evolve__":
+                        await self._run_workspace_evolution()
+                    else:
+                        logger.info("Scheduler: dispatching '%s'", event.source)
+                        await self._agent.run(event.prompt)
             except Exception as exc:
                 logger.error("Scheduler dispatch failed: %s", exc)
 
@@ -87,6 +92,7 @@ class ExecutionWorker:
         self._settings = settings or get_settings()
         self._agent: Agent | None = None
         self._scheduler: _WorkerScheduler | None = None
+        self._agent_lock = asyncio.Lock()
         self._running = False
 
     async def start(self) -> None:
@@ -95,7 +101,7 @@ class ExecutionWorker:
         await self._agent.initialize()
 
         # Start scheduler
-        self._scheduler = _WorkerScheduler(self._agent)
+        self._scheduler = _WorkerScheduler(self._agent, lock=self._agent_lock)
         self._scheduler.add_task(ScheduledTask(
             name="heartbeat", prompt="__heartbeat__",
             schedule_type="interval", schedule_value="1800",
@@ -187,17 +193,18 @@ class ExecutionWorker:
         async def _on_progress(phase: str, detail: str) -> None:
             await send_message(writer, Message.progress(msg_id, phase, detail))
 
-        result = await self._agent.run(
-            user_input,
-            on_progress=_on_progress,
-            conversation_history=history,
-        )
+        async with self._agent_lock:
+            result = await self._agent.run(
+                user_input,
+                on_progress=_on_progress,
+                conversation_history=history,
+            )
 
-        # Serialize AgentResult
-        await send_message(writer, Message.result(msg_id, {
-            "agent_result": result.model_dump(),
-            "episode_id": self._agent.last_episode_id,
-        }))
+            # Serialize AgentResult
+            await send_message(writer, Message.result(msg_id, {
+                "agent_result": result.model_dump(),
+                "episode_id": self._agent.last_episode_id,
+            }))
 
     async def _handle_feedback(self, msg: Message, writer: asyncio.StreamWriter) -> None:
         """Handle /good or /bad feedback."""

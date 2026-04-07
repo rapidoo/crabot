@@ -471,8 +471,8 @@ class TelegramBot:
             output = sr.result.output.strip()
             if not output:
                 continue
-            if len(output) > 1500:
-                output = output[:1500] + "\n... (truncated)"
+            if len(output) > 10000:
+                output = output[:10000] + "\n... (truncated)"
             lines.append(output)
 
         return "\n\n".join(lines).strip()
