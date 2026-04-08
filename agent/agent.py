@@ -200,6 +200,14 @@ class Agent:
             if skill_ctx:
                 context_parts.append(skill_ctx)
                 logger.info("Memory: injecting %s", skill_ctx.split("\n")[0])
+            # Inject active goals so the agent is aware of persistent objectives
+            active_goals = await self._memory.get_active_goals()
+            if active_goals:
+                goal_lines = ["Active persistent goals (created by the user):"]
+                for g in active_goals:
+                    goal_lines.append(f"  - [{g.get('priority', 3)}] {g['description']}")
+                context_parts.append("\n".join(goal_lines))
+                logger.info("Memory: injecting %d active goals", len(active_goals))
             # Inject lessons from past corrections
             if self._settings.lessons.enabled and query_embedding:
                 lesson_ctx = await get_lesson_context(
@@ -290,15 +298,12 @@ class Agent:
         agent_result = AgentResult(goal=plan.goal, results=scored)
         self._write_trace(user_input, agent_result, elapsed, phase_timings=phase_timings)
 
-        # Phase 4: Memory write — persist episode + extract skills + extract lessons + goals
+        # Phase 4: Memory write — persist episode + extract skills + extract lessons
         if self._memory.available:
             await self._persist_memory(user_input, agent_result)
             await self._extract_skills(plan, scored)
             if self._settings.lessons.enabled:
                 await self._extract_lessons(user_input)
-            # Auto-create goal from complex user requests
-            from agent.core.goal_engine import create_goal_from_input
-            await create_goal_from_input(self, user_input)
 
         # Phase 5: Evolution — track prompt scores + periodic strategy analysis
         self._episode_count += 1

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 
 logger = logging.getLogger(__name__)
@@ -46,28 +45,3 @@ async def run_goal_cycle(agent: object) -> int:
         logger.warning("Goal engine failed on '%s': %s", description, exc)
 
     return 0
-
-
-async def create_goal_from_input(agent: object, user_input: str) -> str | None:
-    """Create a goal from user input if it looks like a persistent objective.
-
-    Returns the goal_id if created, None otherwise.
-    """
-    memory = getattr(agent, '_memory', None)
-    if memory is None or not memory.available:
-        return None
-
-    # Only create goals for inputs that look like objectives (not questions or greetings)
-    lower = user_input.lower().strip()
-    if len(lower) < 20:
-        return None
-    # Skip simple questions and greetings
-    if lower.startswith(("hello", "hi ", "salut", "bonjour", "merci", "ok")):
-        return None
-    if lower.endswith("?") and len(lower) < 80:
-        return None
-
-    goal_id = hashlib.md5(user_input.encode()).hexdigest()[:8]
-    await memory.persist_goal(goal_id, user_input)
-    logger.info("Goal auto-created from user input: %s", goal_id)
-    return goal_id
