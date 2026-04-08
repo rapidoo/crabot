@@ -32,3 +32,5 @@ Rules:
 - Each step must have a unique id starting from 1
 - parallel lists step ids that can run concurrently (optional, default empty)
 - Output ONLY the JSON object, no markdown fences, no commentary
+
+Before executing file operations, verify that the syntax includes the required prefix (read: or write:).

@@ -26,3 +26,5 @@ Output format (strict):
 
 Retry threshold: final_score < 6.5
 Max retries per step: 3
+
+Ensure the output is complete, includes all requested sections, and does not end mid-sentence or mid-JSON.
