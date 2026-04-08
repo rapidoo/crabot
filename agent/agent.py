@@ -151,8 +151,17 @@ class Agent:
 
         if complexity == "simple":
             await self._notify(on_progress, "executing", "Direct answer...")
+            # Inject active goals into history so simple path is aware of them
+            simple_history = list(self._conversation_history) if self._conversation_history else []
+            if self._memory.available:
+                active_goals = await self._memory.get_active_goals()
+                if active_goals:
+                    lines = ["[Your active goals set by the user:]"]
+                    for g in active_goals:
+                        lines.append(f"- {g['description']}")
+                    simple_history.insert(0, {"role": "system", "content": "\n".join(lines)})
             result = await self._executor.execute_direct(
-                user_input, conversation_history=self._conversation_history
+                user_input, conversation_history=simple_history
             )
             elapsed = time.monotonic() - start
             logger.info("=== Simple path done in %.1fs", elapsed)
